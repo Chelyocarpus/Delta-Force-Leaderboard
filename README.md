@@ -1,6 +1,6 @@
 # delta-force-leaderboard
 
-![grafik](https://github.com/user-attachments/assets/49758936-fc4f-4ce6-8ac8-89aa168c0772)
+![grafik](https://github.com/user-attachments/assets/fc5c5c8a-0189-4537-b335-da76134f6bff)
 
 This project is designed to process and analyze player statistics from the Delta Force video game using OCR (Optical Character Recognition) and data processing techniques. The project consists of several scripts that handle different aspects of the workflow, from preparing the screenshot for OCR, performing OCR on images, cleaning up and processing the extracted data, and finally displaying the results in a user-friendly GUI.
 
@@ -41,7 +41,7 @@ This code is completly 100% AI generated with GitHub Copilot (more like Mainpilo
 
 ### 2. Prepare Screenshot for OCR
 
-- The better the source, the better the OCR
+- Run prepare_scoreboard_for_ocr.py to prepare the screenshot for OCR. The better the source, the better the OCR
 
 ### 3. Perform OCR on Image
 
