@@ -24,6 +24,7 @@ This code is completly 100% AI generated with GitHub Copilot (more like Mainpilo
 
 - Reads the OCR output from the .txt file.
 - Processes the lines to extract relevant player statistics, including rank, class, name, score, kills, deaths, assists, revives, and captures.
+- Tries to fix issues caused by OCR (e.g. wrong or missing characters)
 - Maps class symbols to their respective names (e.g., "+" to "Medic").
 - Writes the cleaned data to a CSV file (output.csv).
 
