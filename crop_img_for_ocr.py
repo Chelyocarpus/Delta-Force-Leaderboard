@@ -31,13 +31,13 @@ def crop_image(image_path, output_folder, coordinates, region_name):
     print(f"Cropped {region_name} image saved at: {cropped_path}")
 
 # Input and output paths
-screenshots_path = r"S:\Steam\userdata\40101941\760\remote\2507950\screenshots\test"
+screenshots_path = r"S:\Steam\userdata\40101941\760\remote\2507950\screenshots"
 output_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workflow')
 
 # Define regions with their coordinates
 regions = {
-    'scoreboard': (337, 177, 1886, 1042),
-    'player_list': (337, 177, 1886, 900)  # Adjust these coordinates as needed
+    'scoreboard': (337, 177, 1886, 1042), # top-left, bottom-right
+    'general_information': (700, 27, 1221, 85)  # top-left, bottom-right
 }
 
 # Process all image files

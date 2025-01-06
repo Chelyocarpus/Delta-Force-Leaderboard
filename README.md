@@ -4,11 +4,36 @@
 
 This project is designed to process and analyze player statistics from the Delta Force video game using OCR (Optical Character Recognition) and data processing techniques. The project consists of several scripts that handle different aspects of the workflow, from preparing the screenshot for OCR, performing OCR on images, processing and cleaning the extracted data, and finally displaying the results in a user-friendly GUI.
 
+Despite its name, this project could be adapted to any video game that has something like a scoreboard or statistics.
+
 This code is completly 100% AI generated with GitHub Copilot (more like Mainpilot). This project is also a good example what LLM's like Claude 3.5 Sonnet and GPT 4o are capable of.
+
+# Features
+
+## 🎯 Core Features
+- **Advanced Player Statistics Tracking**
+  - Track detailed performance metrics across all matches
+  - Monitor K/D ratios, scores, objectives, and more
+
+- **Class-Based Analysis**
+  - Detailed statistics for each combat class (Assault, Engineer, Support, Recon)
+  - Class-specific performance metrics
+  - Identify your strongest roles and playstyles
+
+- **Map Performance Insights**
+  - Track performance across different maps
+  - Analyze win rates and strategies per battlefield
+  - Identify your strongest and weakest maps
+
+- **Snapshot Management**
+  - Store and organize match snapshots with timestamps
+  - Search and filter through historical match data
+  - View detailed match statistics for any saved game
+  - Easy deletion and database management
 
 # Key Components
 
-### Screenshot cropping (prepare_scoreboard_for_ocr.py)
+### Screenshot cropping (prepare_img_for_ocr.py)
 
 - Opens an image from a specified path.
 - Uses the pillow library to crop the image to a specified rectangular region.
@@ -28,7 +53,7 @@ This code is completly 100% AI generated with GitHub Copilot (more like Mainpilo
 - Maps class symbols to their respective names (e.g., "+" to "Medic").
 - Writes the cleaned data to a CSV file (output.csv).
 
-### GUI Display (stats.py)
+### GUI Display (leaderboard.py)
 
 - Provides a PyQt5-based GUI to display player statistics.
 - Includes a PlayerDetailsDialog class to show detailed statistics for a selected player.
@@ -38,7 +63,7 @@ This code is completly 100% AI generated with GitHub Copilot (more like Mainpilo
 # Example Workflow
 ### 1. Take a Screenshot
 
-- Take a screenshot of the scoreboard ingame (either after the Round or in Match History)
+- Take a screenshot of the scoreboard (either after the Round or in Match History)
 
 ### 2. Prepare Screenshot for OCR
 
@@ -72,7 +97,7 @@ This code is completly 100% AI generated with GitHub Copilot (more like Mainpilo
 - A: No, these scripts work entirely based on the screenshot made with the print screen button or Steam overlay. There's no interaction with the game itself whatsoever (no memory reading, hooking, etc.)
 
 # Credits
-- Claude 3.5 Sonnet
+- Claude 3.5 Sonnet (Main Developer)
 - GPT 4o
 - Team Jade (Delta Force Developers)
 
