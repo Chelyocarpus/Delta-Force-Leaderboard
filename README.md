@@ -1,6 +1,6 @@
 # delta-force-leaderboard
 
-![grafik](https://github.com/user-attachments/assets/fc5c5c8a-0189-4537-b335-da76134f6bff)
+![grafik](https://github.com/user-attachments/assets/f8326d92-e905-42fb-b038-8d7b9cf656ae)
 
 This project is designed to process and analyze player statistics from the Delta Force video game using OCR (Optical Character Recognition) and data processing techniques. The project consists of several scripts that handle different aspects of the workflow, from preparing the screenshot for OCR, performing OCR on images, cleaning up and processing the extracted data, and finally displaying the results in a user-friendly GUI.
 
