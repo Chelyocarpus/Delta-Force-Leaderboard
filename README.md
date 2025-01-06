@@ -2,7 +2,7 @@
 
 ![grafik](https://github.com/user-attachments/assets/f8326d92-e905-42fb-b038-8d7b9cf656ae)
 
-This project is designed to process and analyze player statistics from the Delta Force video game using OCR (Optical Character Recognition) and data processing techniques. The project consists of several scripts that handle different aspects of the workflow, from preparing the screenshot for OCR, performing OCR on images, cleaning up and processing the extracted data, and finally displaying the results in a user-friendly GUI.
+This project is designed to process and analyze player statistics from the Delta Force video game using OCR (Optical Character Recognition) and data processing techniques. The project consists of several scripts that handle different aspects of the workflow, from preparing the screenshot for OCR, performing OCR on images, processing and cleaning the extracted data, and finally displaying the results in a user-friendly GUI.
 
 This code is completly 100% AI generated with GitHub Copilot (more like Mainpilot). This project is also a good example what LLM's like Claude 3.5 Sonnet and GPT 4o are capable of.
 
