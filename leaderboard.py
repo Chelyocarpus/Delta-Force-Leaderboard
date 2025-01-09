@@ -1,694 +1,22 @@
 import sys
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
-    QMenu, QAction, QMenuBar, QFileDialog, QMessageBox, QDialog, QComboBox, QPushButton,
-    QHBoxLayout, QLabel, QHeaderView, QLineEdit, QGroupBox, QGridLayout, QTabWidget, QScrollArea, QInputDialog
+    QMenu, QAction, QMenuBar, QFileDialog, QMessageBox, QHBoxLayout, QLabel, QHeaderView, QLineEdit, QDialog
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QSortFilterProxyModel, QSettings
+from PyQt5.QtCore import Qt, QSettings, QTimer
 from PyQt5.QtGui import QIcon
 import csv, sqlite3, os
-class SnapshotViewerDialog(QDialog):
-    snapshot_deleted = pyqtSignal(str)  # Signal for deletion notification
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.parent = parent
-        self.setWindowTitle("Snapshot Viewer")
-        self.setGeometry(200, 200, 1200, 600)
-        
-        # Main layout with horizontal split
-        main_layout = QHBoxLayout()
-        
-        # Left side - Snapshot List
-        left_panel = QVBoxLayout()
-        
-        # Search bar
-        search_layout = QHBoxLayout()
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search snapshots...")
-        self.search_input.textChanged.connect(self.refresh_snapshots)
-        search_layout.addWidget(QLabel("Search:"))
-        search_layout.addWidget(self.search_input)
-        left_panel.addLayout(search_layout)
-        
-        # Snapshot overview table
-        self.overview_table = QTableWidget()
-        self.overview_table.setColumnCount(3)
-        self.overview_table.setHorizontalHeaderLabels(["Date", "Map", "Outcome"])
-        self.overview_table.setSortingEnabled(True)
-        self.overview_table.selectionModel().selectionChanged.connect(self.on_overview_selection)
-        left_panel.addWidget(self.overview_table)
-        
-        # Control buttons for snapshots
-        buttons_layout = QHBoxLayout()
-        delete_btn = QPushButton("Delete Selected")
-        delete_btn.clicked.connect(self.delete_selected_snapshot)
-        buttons_layout.addWidget(delete_btn)
-        
-        purge_btn = QPushButton("Purge Database")
-        purge_btn.setStyleSheet("background-color: #ff6b6b;")
-        purge_btn.clicked.connect(self.purge_database)
-        buttons_layout.addWidget(purge_btn)
-        
-        left_panel.addLayout(buttons_layout)
-        
-        # Add left panel to main layout
-        left_widget = QWidget()
-        left_widget.setLayout(left_panel)
-        main_layout.addWidget(left_widget, 1)
-        
-        # Right side - Snapshot Details
-        right_panel = QVBoxLayout()
-        
-        # Table
-        self.table = QTableWidget()
-        self.table.setColumnCount(9)
-        self.table.setHorizontalHeaderLabels([
-            "Rank", "Class", "Name", "Score", "Kills", "Deaths", "Assists", "Revives", "Captures"
-        ])
-        self.table.setSortingEnabled(True)
-        right_panel.addWidget(self.table)
-        
-        # Add right panel to main layout
-        right_widget = QWidget()
-        right_widget.setLayout(right_panel)
-        main_layout.addWidget(right_widget, 2)
-        
-        self.setLayout(main_layout)
-        self.snapshot_deleted.connect(parent.on_snapshot_deleted)
-        
-        # Initial load
-        self.refresh_snapshots()
 
-    def on_snapshot_selected(self, index):
-        """Handler for snapshot selection changes"""
-        if index >= 0:  # Only load if a valid selection
-            self.load_selected_snapshot()
+from src.data.database import Database
+from src.data.medals import MedalProcessor
+from src.gui.dialogs.snapshot_viewer import SnapshotViewerDialog
+from src.gui.dialogs.player_details import PlayerDetailsDialog
+from src.gui.widgets.numeric_sort import NumericSortItem
 
-    def refresh_snapshots(self):
-        self.overview_table.setSortingEnabled(False)
-        search_text = self.search_input.text().lower()
-        
-        with sqlite3.connect(self.parent.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT DISTINCT timestamp,
-                    SUBSTR(snapshot_name, INSTR(snapshot_name, ' - ') + 3, 
-                        INSTR(snapshot_name, ' (') - INSTR(snapshot_name, ' - ') - 3) as map_name,
-                    SUBSTR(snapshot_name, INSTR(snapshot_name, '('), 
-                        LENGTH(snapshot_name) - INSTR(snapshot_name, '(') + 1) as outcome,
-                    snapshot_name
-                FROM snapshots 
-                WHERE LOWER(snapshot_name) LIKE ?
-                ORDER BY timestamp DESC
-            """, (f'%{search_text}%',))
-            snapshots = cursor.fetchall()
-            
-            self.overview_table.setRowCount(len(snapshots))
-            for row, data in enumerate(snapshots):
-                # Store full snapshot name in hidden column for reference
-                self.overview_table.setItem(row, 0, QTableWidgetItem(data[0]))  # Date
-                self.overview_table.setItem(row, 1, QTableWidgetItem(data[1]))  # Map
-                self.overview_table.setItem(row, 2, QTableWidgetItem(data[2]))  # Outcome
-                # Store full snapshot name as item data
-                self.overview_table.item(row, 0).setData(Qt.UserRole, data[3])
-        
-        self.overview_table.resizeColumnsToContents()
-        self.overview_table.setSortingEnabled(True)
-    
-    def on_overview_selection(self, selected, deselected):
-        if selected.indexes():
-            row = selected.indexes()[0].row()
-            snapshot_name = self.overview_table.item(row, 0).data(Qt.UserRole)
-            self.load_selected_snapshot(snapshot_name)
-
-    def load_selected_snapshot(self, snapshot_name):
-        if not snapshot_name:
-            return
-            
-        with sqlite3.connect(self.parent.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT * FROM snapshots 
-                WHERE snapshot_name = ? 
-                ORDER BY rank ASC
-            """, (snapshot_name,))  # Add ORDER BY
-            data = cursor.fetchall()
-            
-            self.table.setRowCount(len(data))
-            for row, rowData in enumerate(data):
-                # Skip snapshot_name and timestamp columns (last 2 columns)
-                for col, value in enumerate(rowData[:-2]):
-                    if isinstance(value, (int, float)):  # Use NumericSortItem for numbers
-                        item = NumericSortItem(value)
-                    else:
-                        item = QTableWidgetItem(str(value))
-                    item.setTextAlignment(Qt.AlignCenter)
-                    self.table.setItem(row, col, item)
-            
-            # Auto-resize columns to content
-            self.table.resizeColumnsToContents()
-
-    def delete_selected_snapshot(self):
-        selected_items = self.overview_table.selectedItems()
-        if not selected_items:
-            return
-            
-        row = selected_items[0].row()
-        snapshot_name = self.overview_table.item(row, 0).data(Qt.UserRole)
-        
-        reply = QMessageBox.question(self, 'Delete Snapshot',
-                                   f'Are you sure you want to delete "{snapshot_name}"?',
-                                   QMessageBox.Yes | QMessageBox.No)
-        
-        if reply == QMessageBox.Yes:
-            try:
-                with sqlite3.connect(self.parent.db_path) as conn:
-                    cursor = conn.cursor()
-                    
-                    # Get all names from this snapshot for cleanup
-                    cursor.execute("""
-                        SELECT name FROM snapshots 
-                        WHERE snapshot_name = ?
-                    """, (snapshot_name,))
-                    names = [row[0] for row in cursor.fetchall()]
-                    
-                    # Delete from snapshots table
-                    cursor.execute("DELETE FROM snapshots WHERE snapshot_name = ?", 
-                                 (snapshot_name,))
-                    
-                    # Delete from players table if these names aren't in other snapshots
-                    for name in names:
-                        cursor.execute("""
-                            DELETE FROM players 
-                            WHERE name = ? 
-                            AND NOT EXISTS (
-                                SELECT 1 FROM snapshots 
-                                WHERE name = ? 
-                                AND snapshot_name != ?
-                            )
-                        """, (name, name, snapshot_name))
-                    
-                    conn.commit()
-                
-                self.refresh_snapshots()
-                self.parent.load_data_from_db()  # Refresh main window immediately
-                self.snapshot_deleted.emit(snapshot_name)  # Emit signal
-                
-                # If there are remaining snapshots, load the first one
-                if self.overview_table.rowCount() > 0:
-                    first_snapshot = self.overview_table.item(0, 0).data(Qt.UserRole)
-                    self.load_selected_snapshot(first_snapshot)
-                else:
-                    self.table.setRowCount(0)
-                
-                QMessageBox.information(self, "Success", 
-                    f"Snapshot '{snapshot_name}' deleted successfully")
-                    
-            except Exception as e:
-                QMessageBox.critical(self, "Error", 
-                    f"Failed to delete snapshot: {str(e)}")
-
-    def purge_database(self):
-        reply = QMessageBox.warning(
-            self,
-            "Purge Database",
-            "WARNING: This will permanently delete ALL snapshots!\n\n"
-            "Are you absolutely sure you want to continue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            confirm = QMessageBox.warning(
-                self,
-                "Confirm Purge",
-                "This action CANNOT be undone!\n\n"
-                "Type 'PURGE' to confirm:",
-                QMessageBox.Ok
-            )
-            
-            if confirm == QMessageBox.Ok:
-                text, ok = QInputDialog.getText(self, "Final Confirmation", "Type 'PURGE' to confirm:")
-                if ok and text == "PURGE":
-                    try:
-                        with sqlite3.connect(self.parent.db_path) as conn:
-                            cursor = conn.cursor()
-                            cursor.execute("DELETE FROM snapshots")
-                            cursor.execute("DELETE FROM players")
-                            conn.commit()
-                        
-                        self.refresh_snapshots()
-                        self.table.setRowCount(0)
-                        self.parent.load_data_from_db()
-                        QMessageBox.information(self, "Success", "Database purged successfully")
-                    except Exception as e:
-                        QMessageBox.critical(self, "Error", f"Failed to purge database: {str(e)}")
-
-class PlayerDetailsDialog(QDialog):
-    def __init__(self, parent=None, player_name=None):
-        super().__init__(parent)
-        self.parent = parent
-        self.player_name = player_name
-        self.setWindowTitle(f"Player Details - {player_name}")
-        self.settings = QSettings('DeltaForce', 'Leaderboard')
-        
-        # Restore window state or use default
-        geometry = self.settings.value('player_details_geometry')
-        if geometry:
-            self.restoreGeometry(geometry)
-        else:
-            self.setGeometry(200, 200, 900, 500)
-        
-        # Create main layout and tab widget
-        layout = QVBoxLayout()
-        self.tabs = QTabWidget()
-        
-        # Create tabs
-        self.overall_tab = QWidget()
-        self.class_tab = QWidget()
-        self.attacker_tab = QWidget()
-        self.defender_tab = QWidget()
-        self.map_tab = QWidget()
-        
-        # Add tabs to widget
-        self.tabs.addTab(self.overall_tab, "Overall Statistics")
-        self.tabs.addTab(self.class_tab, "Class Statistics") 
-        self.tabs.addTab(self.attacker_tab, "Attacker")
-        self.tabs.addTab(self.defender_tab, "Defender")
-        self.tabs.addTab(self.map_tab, "Map Performance")
-        
-        # Setup individual tabs
-        self.setup_overall_tab()
-        self.setup_class_tab()
-        self.setup_attacker_tab()
-        self.setup_defender_tab()
-        self.setup_map_tab()
-        
-        layout.addWidget(self.tabs)
-        self.setLayout(layout)
-
-    def setup_overall_tab(self):
-        layout = QVBoxLayout()
-        summary_group = QGroupBox("Overall Statistics")
-        summary_layout = QGridLayout()
-        
-        with sqlite3.connect(self.parent.db_path) as conn:
-            cursor = conn.cursor()
-            # Add favorite class query
-            cursor.execute("""
-                SELECT class, COUNT(*) as class_count
-                FROM snapshots
-                WHERE name = ?
-                GROUP BY class
-                ORDER BY class_count DESC
-                LIMIT 1
-            """, (self.player_name,))
-            favorite_class = cursor.fetchone()
-            
-            # Add victory/defeat count query
-            cursor.execute("""
-                SELECT 
-                    SUM(CASE WHEN snapshot_name LIKE '%(VICTORY)%' THEN 1 ELSE 0 END) as victories,
-                    SUM(CASE WHEN snapshot_name LIKE '%(DEFEAT)%' THEN 1 ELSE 0 END) as defeats,
-                    ROUND(CAST(SUM(CASE WHEN snapshot_name LIKE '%(VICTORY)%' THEN 1 ELSE 0 END) AS FLOAT) * 100 /
-                        COUNT(*), 1) as win_rate
-                FROM snapshots
-                WHERE name = ?
-            """, (self.player_name,))
-            victory_stats = cursor.fetchone()
-            
-            # Updated stats query to round all values to integers
-            cursor.execute("""
-                SELECT 
-                    COUNT(DISTINCT snapshot_name) as num_games,
-                    SUM(score) as total_score,
-                    ROUND(AVG(score)) as avg_score,
-                    MAX(score) as best_score,
-                    SUM(kills) as total_kills,
-                    ROUND(AVG(kills)) as avg_kills,
-                    SUM(deaths) as total_deaths,
-                    ROUND(AVG(deaths)) as avg_deaths,
-                    ROUND(CAST(SUM(kills) AS FLOAT) / 
-                          CASE WHEN SUM(deaths) = 0 THEN 1 
-                          ELSE SUM(deaths) END, 2) as kd_ratio,
-                    SUM(assists) as total_assists,
-                    ROUND(AVG(assists)) as avg_assists,
-                    SUM(revives) as total_revives,
-                    ROUND(AVG(revives)) as avg_revives,
-                    SUM(captures) as total_captures,
-                    ROUND(AVG(captures)) as avg_captures,
-                    ROUND(AVG(rank)) as avg_rank
-                FROM snapshots
-                WHERE name = ?
-            """, (self.player_name,))
-            stats = cursor.fetchone()
-            
-            # Reorganize labels into logical groups
-            stat_groups = {
-                "General": [
-                    ("Games Played:", stats[0]),
-                    ("Average Rank:", stats[15]),
-                    ("Favorite Class:", f"{favorite_class[0]} ({favorite_class[1]} times)"),
-                    ("Victories:", victory_stats[0]),
-                    ("Defeats:", victory_stats[1]),
-                    ("Win Rate:", f"{victory_stats[2]}%")
-                ],
-                "Score": [
-                    ("Total Score:", stats[1]),
-                    ("Average Score:", stats[2]),
-                    ("Best Score:", stats[3])
-                ],
-                "Combat": [
-                    ("Total Kills:", stats[4]),
-                    ("Average Kills:", stats[5]),
-                    ("Total Deaths:", stats[6]),
-                    ("Average Deaths:", stats[7]),
-                    ("K/D Ratio:", stats[8])
-                ],
-                "Support": [
-                    ("Total Assists:", stats[9]),
-                    ("Average Assists:", stats[10]),
-                    ("Total Revives:", stats[11]),
-                    ("Average Revives:", stats[12])
-                ],
-                "Objectives": [
-                    ("Total Captures:", stats[13]),
-                    ("Average Captures:", stats[14])
-                ]
-            }
-            
-            # Create group boxes for each category
-            row = 0
-            for group_name, group_stats in stat_groups.items():
-                group_box = QGroupBox(group_name)
-                group_layout = QGridLayout()
-                
-                for i, (label, value) in enumerate(group_stats):
-                    group_layout.addWidget(QLabel(label), i, 0)
-                    if "K/D Ratio" in label:
-                        formatted_value = f"{value:.2f}"
-                    else:
-                        formatted_value = str(int(value)) if isinstance(value, (int, float)) else str(value)
-                    group_layout.addWidget(QLabel(formatted_value), i, 1)
-                
-                group_box.setLayout(group_layout)
-                summary_layout.addWidget(group_box, row // 2, row % 2)
-                row += 1
-
-        summary_group.setLayout(summary_layout)
-        layout.addWidget(summary_group)
-        
-        # Add history table
-        history_group = QGroupBox("Match History")
-        history_layout = QVBoxLayout()
-        
-        self.history_table = QTableWidget()
-        self.history_table.setColumnCount(10)
-        self.history_table.setHorizontalHeaderLabels([
-            "Date", "Snapshot", "Rank", "Class", "Score", "Kills", 
-            "Deaths", "Assists", "Revives", "Captures"
-        ])
-        
-        # Enable sorting
-        self.history_table.setSortingEnabled(True)
-        
-        # Load match history
-        cursor.execute("""
-            SELECT 
-                timestamp,
-                snapshot_name,
-                rank,
-                class,
-                score,
-                kills,
-                deaths,
-                assists,
-                revives,
-                captures
-            FROM snapshots
-            WHERE name = ?
-            ORDER BY timestamp DESC
-        """, (self.player_name,))
-        
-        history = cursor.fetchall()
-        self.history_table.setRowCount(len(history))
-        
-        for row, data in enumerate(history):
-            for col, value in enumerate(data):
-                # Use NumericSortItem for numeric columns, skip Date, Snapshot, and Class columns
-                if col in [0, 1, 3]:  # Date, Snapshot, and Class columns
-                    item = QTableWidgetItem(str(value))
-                else:
-                    item = NumericSortItem(value)
-                item.setTextAlignment(Qt.AlignCenter)
-                self.history_table.setItem(row, col, item)
-        
-        self.history_table.resizeColumnsToContents()
-        history_layout.addWidget(self.history_table)
-        history_group.setLayout(history_layout)
-        layout.addWidget(history_group)
-        
-        self.overall_tab.setLayout(layout)
-
-    def setup_class_tab(self):
-        layout = QVBoxLayout()
-        
-        # Define all available classes
-        all_classes = ["Assault", "Engineer", "Support", "Recon"]
-        
-        with sqlite3.connect(self.parent.db_path) as conn:
-            cursor = conn.cursor()
-            
-            for class_name in all_classes:
-                # Get stats for this class with victory/defeat counts
-                cursor.execute("""
-                    SELECT 
-                        COUNT(*) as games,
-                        ROUND(AVG(score)) as avg_score,
-                        MAX(score) as best_score,
-                        SUM(kills) as total_kills,
-                        ROUND(AVG(kills), 1) as avg_kills,
-                        SUM(deaths) as total_deaths,
-                        ROUND(AVG(deaths), 1) as avg_deaths,
-                        ROUND(CAST(SUM(kills) AS FLOAT) / 
-                              CASE WHEN SUM(deaths) = 0 THEN 1 
-                              ELSE SUM(deaths) END, 2) as kd_ratio,
-                        SUM(assists) as total_assists,
-                        ROUND(AVG(assists), 1) as avg_assists,
-                        SUM(revives) as total_revives,
-                        ROUND(AVG(revives), 1) as avg_revives,
-                        SUM(captures) as total_captures,
-                        ROUND(AVG(captures), 1) as avg_captures,
-                        ROUND(AVG(rank)) as avg_rank,
-                        SUM(CASE WHEN snapshot_name LIKE '%(VICTORY)%' THEN 1 ELSE 0 END) as victories,
-                        SUM(CASE WHEN snapshot_name LIKE '%(DEFEAT)%' THEN 1 ELSE 0 END) as defeats,
-                        ROUND(CAST(SUM(CASE WHEN snapshot_name LIKE '%(VICTORY)%' THEN 1 ELSE 0 END) AS FLOAT) * 100 /
-                            COUNT(*), 1) as win_rate
-                    FROM snapshots
-                    WHERE name = ? AND class = ?
-                """, (self.player_name, class_name))
-                stats = cursor.fetchone()
-                
-                # Create group box for this class
-                class_group = QGroupBox(f"{class_name} Statistics")
-                class_layout = QGridLayout()
-                
-                if stats[0] > 0:  # If player has played this class
-                    # Organize stats into categories
-                    stat_data = [
-                        ("Games Played:", stats[0]),
-                        ("Average Rank:", stats[14]),
-                        ("Victories:", stats[15]),
-                        ("Defeats:", stats[16]),
-                        ("Win Rate:", f"{stats[17]}%"),
-                        ("Average Score:", stats[1]),
-                        ("Best Score:", stats[2]),
-                        ("K/D Ratio:", stats[7]),
-                        ("Total Kills:", stats[3]),
-                        ("Avg Kills:", stats[4]),
-                        ("Total Deaths:", stats[5]),
-                        ("Avg Deaths:", stats[6]),
-                        ("Total Assists:", stats[8]),
-                        ("Avg Assists:", stats[9]),
-                        ("Total Revives:", stats[10]),
-                        ("Avg Revives:", stats[11]),
-                        ("Total Captures:", stats[12]),
-                        ("Avg Captures:", stats[13])
-                    ]
-                    
-                    # Add stats to layout in two columns
-                    for i, (label, value) in enumerate(stat_data):
-                        row = i % 8
-                        col = i // 8 * 2
-                        
-                        class_layout.addWidget(QLabel(label), row, col)
-                        if isinstance(value, float):
-                            formatted_value = f"{value:.2f}" if "Ratio" in label else f"{value:.1f}"
-                        else:
-                            formatted_value = str(value)
-                        class_layout.addWidget(QLabel(formatted_value), row, col + 1)
-                else:
-                    # Show "No data available" for unplayed classes
-                    class_layout.addWidget(QLabel("No games played with this class"), 0, 0)
-                
-                class_group.setLayout(class_layout)
-                layout.addWidget(class_group)
-        
-        # Add scroll area if many classes
-        scroll = QScrollArea()
-        scroll.setWidget(QWidget())
-        scroll.widget().setLayout(layout)
-        scroll.setWidgetResizable(True)
-        
-        # Main layout for tab
-        main_layout = QVBoxLayout()
-        main_layout.addWidget(scroll)
-        self.class_tab.setLayout(main_layout)
-
-    def setup_attacker_tab(self):
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Coming Soon"))
-        layout.addStretch()
-        self.attacker_tab.setLayout(layout)
-
-    def setup_defender_tab(self):
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel("Coming Soon"))
-        layout.addStretch()
-        self.defender_tab.setLayout(layout)
-
-    def setup_map_tab(self):
-        layout = QVBoxLayout()
-        
-        # Create map selector
-        selector_layout = QHBoxLayout()
-        self.map_combo = QComboBox()
-        selector_layout.addWidget(QLabel("Select Map:"))
-        selector_layout.addWidget(self.map_combo)
-        layout.addLayout(selector_layout)
-        
-        # Create stats group
-        self.map_stats_group = QGroupBox("Map Statistics")
-        self.map_stats_layout = QGridLayout()
-        self.map_stats_group.setLayout(self.map_stats_layout)
-        layout.addWidget(self.map_stats_group)
-        
-        # Load available maps
-        with sqlite3.connect(self.parent.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT DISTINCT SUBSTR(snapshot_name, INSTR(snapshot_name, ' - ') + 3, 
-                    INSTR(snapshot_name, ' (') - INSTR(snapshot_name, ' - ') - 3) as map_name
-                FROM snapshots
-                WHERE name = ?
-                ORDER BY map_name
-            """, (self.player_name,))
-            maps = cursor.fetchall()
-            
-            for map_name in maps:
-                self.map_combo.addItem(map_name[0])
-        
-        # Connect map selection change event
-        self.map_combo.currentTextChanged.connect(self.load_map_stats)
-        
-        # Load initial map stats if any maps exist
-        if self.map_combo.count() > 0:
-            self.load_map_stats(self.map_combo.currentText())
-        
-        self.map_tab.setLayout(layout)
-
-    def load_map_stats(self, map_name):
-        # Clear existing stats
-        while self.map_stats_layout.count():
-            child = self.map_stats_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-                
-        with sqlite3.connect(self.parent.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as games,
-                    ROUND(AVG(score)) as avg_score,
-                    MAX(score) as best_score,
-                    SUM(kills) as total_kills,
-                    ROUND(AVG(kills), 1) as avg_kills,
-                    SUM(deaths) as total_deaths,
-                    ROUND(AVG(deaths), 1) as avg_deaths,
-                    ROUND(CAST(SUM(kills) AS FLOAT) / 
-                          CASE WHEN SUM(deaths) = 0 THEN 1 
-                          ELSE SUM(deaths) END, 2) as kd_ratio,
-                    SUM(assists) as total_assists,
-                    ROUND(AVG(assists), 1) as avg_assists,
-                    SUM(revives) as total_revives,
-                    ROUND(AVG(revives), 1) as avg_revives,
-                    SUM(captures) as total_captures,
-                    ROUND(AVG(captures), 1) as avg_captures,
-                    ROUND(AVG(rank)) as avg_rank,
-                    SUM(CASE WHEN snapshot_name LIKE '%(VICTORY)%' THEN 1 ELSE 0 END) as victories,
-                    SUM(CASE WHEN snapshot_name LIKE '%(DEFEAT)%' THEN 1 ELSE 0 END) as defeats,
-                    ROUND(CAST(SUM(CASE WHEN snapshot_name LIKE '%(VICTORY)%' THEN 1 ELSE 0 END) AS FLOAT) * 100 /
-                        COUNT(*), 1) as win_rate
-                FROM snapshots
-                WHERE name = ? AND snapshot_name LIKE ? || ' (%'
-            """, (self.player_name, f"% - {map_name}"))
-            stats = cursor.fetchone()
-            
-            # Organize stats into groups
-            stat_groups = {
-                "General": [
-                    ("Games Played:", stats[0]),
-                    ("Average Rank:", stats[14]),
-                    ("Victories:", stats[15]),
-                    ("Defeats:", stats[16]),
-                    ("Win Rate:", f"{stats[17]}%")
-                ],
-                "Score": [
-                    ("Average Score:", stats[1]),
-                    ("Best Score:", stats[2])
-                ],
-                "Combat": [
-                    ("Total Kills:", stats[3]),
-                    ("Average Kills:", stats[4]),
-                    ("Total Deaths:", stats[5]),
-                    ("Average Deaths:", stats[6]),
-                    ("K/D Ratio:", stats[7])
-                ],
-                "Support": [
-                    ("Total Assists:", stats[8]),
-                    ("Average Assists:", stats[9]),
-                    ("Total Revives:", stats[10]),
-                    ("Average Revives:", stats[11])
-                ],
-                "Objectives": [
-                    ("Total Captures:", stats[12]),
-                    ("Average Captures:", stats[13])
-                ]
-            }
-            
-            # Create group boxes for each category
-            row = 0
-            for group_name, group_stats in stat_groups.items():
-                group_box = QGroupBox(group_name)
-                group_layout = QGridLayout()
-                
-                for i, (label, value) in enumerate(group_stats):
-                    group_layout.addWidget(QLabel(label), i, 0)
-                    if isinstance(value, float):
-                        formatted_value = f"{value:.2f}" if "Ratio" in label else f"{value:.1f}"
-                    else:
-                        formatted_value = str(value)
-                    group_layout.addWidget(QLabel(formatted_value), i, 1)
-                
-                group_box.setLayout(group_layout)
-                self.map_stats_layout.addWidget(group_box, row // 2, row % 2)
-                row += 1
-
-    def closeEvent(self, event):
-        # Save window geometry on close
-        self.settings.setValue('player_details_geometry', self.saveGeometry())
-        super().closeEvent(event)
+from src.utils.constants import RESOURCES_DIR
+from src.gui.dialogs.import_on_startup import ImportOnStartupDialog
+from src.utils.constants import IMPORT_DIR
+import glob
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -700,14 +28,16 @@ class MainWindow(QMainWindow):
         self.restore_window_state()
 
         # Set window icon
-        icon_path = os.path.join(os.path.dirname(__file__), "favicon.png")
+        icon_path = icon_path = os.path.join(RESOURCES_DIR, "favicon.png")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
             app_icon = QIcon(icon_path)
             QApplication.setWindowIcon(app_icon)
 
         # Initialize database
-        self.init_database()
+        self.db = Database()
+        self.db_path = self.db.db_path  # Keep reference for compatibility
+        self.medal_processor = MedalProcessor(self.db)
         
         # Create menu bar
         self.create_menu_bar()
@@ -754,6 +84,16 @@ class MainWindow(QMainWindow):
         self.current_snapshot = None  # Track current snapshot
         self.column_widths = []  # Add this to store column widths
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
+        self.NumericSortItem = NumericSortItem  # Make NumericSortItem available to dialogs
+
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)  # Select entire rows
+        self.table.setSelectionMode(QTableWidget.SingleSelection)  # Allow only single row selection
+        self.table.itemClicked.connect(self.on_item_clicked)
+
+        # Setup auto-backup
+        self.backup_timer = QTimer(self)
+        self.backup_timer.timeout.connect(self.auto_backup)
+        self.backup_timer.start(3600000)  # Backup every hour
 
     def closeEvent(self, event):
         self.save_window_state()
@@ -773,6 +113,12 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("File")
         
+        # Add export functionality
+        export_action = QAction("Export Stats", self)
+        export_action.triggered.connect(self.export_stats)
+        export_action.setToolTip("Export current view to CSV")
+        file_menu.addAction(export_action)
+        
         import_action = QAction("Import CSV", self)
         import_action.triggered.connect(self.import_csv)
         file_menu.addAction(import_action)
@@ -781,21 +127,37 @@ class MainWindow(QMainWindow):
         view_snapshots_action.triggered.connect(self.view_snapshots)
         file_menu.addAction(view_snapshots_action)
 
-    def init_database(self):
-        self.db_path = os.path.join(os.path.dirname(__file__), "leaderboard.db")
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute('''CREATE TABLE IF NOT EXISTS players (
-                rank INTEGER, class TEXT, name TEXT, score INTEGER,
-                kills INTEGER, deaths INTEGER, assists INTEGER,
-                revives INTEGER, captures INTEGER)''')
-            
-            cursor.execute('''CREATE TABLE IF NOT EXISTS snapshots (
-                rank INTEGER, class TEXT, name TEXT, score INTEGER,
-                kills INTEGER, deaths INTEGER, assists INTEGER,
-                revives INTEGER, captures INTEGER,
-                snapshot_name TEXT, timestamp DATETIME)''')
-            conn.commit()
+        # Add backup/restore menu
+        backup_menu = menubar.addMenu("Backup")
+        
+        backup_action = QAction("Create Backup", self)
+        backup_action.triggered.connect(self.auto_backup)
+        backup_menu.addAction(backup_action)
+        
+        restore_action = QAction("Restore Backup", self)
+        restore_action.triggered.connect(self.restore_from_backup)
+        backup_menu.addAction(restore_action)
+
+    def export_stats(self):
+        file_name, _ = QFileDialog.getSaveFileName(
+            self, "Export Stats", "", "CSV Files (*.csv)")
+        if file_name:
+            try:
+                with open(file_name, 'w', newline='') as csvfile:
+                    writer = csv.writer(csvfile)
+                    # Write headers
+                    headers = [self.table.horizontalHeaderItem(i).text() 
+                             for i in range(self.table.columnCount())]
+                    writer.writerow(headers)
+                    # Write data
+                    for row in range(self.table.rowCount()):
+                        row_data = [self.table.item(row, col).text() 
+                                  for col in range(self.table.columnCount())]
+                        writer.writerow(row_data)
+                QMessageBox.information(self, "Export Complete", 
+                    "Statistics exported successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Export Error", str(e))
 
     def save_column_widths(self):
         """Save current column widths"""
@@ -851,6 +213,20 @@ class MainWindow(QMainWindow):
             self.restore_column_widths()
             
         self.table.setSortingEnabled(True)  # Re-enable sorting
+        self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)  # Default sort by score
+        
+        # Add tooltips to column headers
+        tooltips = [
+            "Player Name",
+            "Total Score Across All Games",
+            "Total Kills Across All Games",
+            "Total Deaths Across All Games",
+            "Total Assists Across All Games",
+            "Total Revives Across All Games",
+            "Total Captures Across All Games"
+        ]
+        for col, tooltip in enumerate(tooltips):
+            self.table.horizontalHeaderItem(col).setToolTip(tooltip)
 
     def on_search(self, text):
         """Handler for search input changes"""
@@ -888,12 +264,7 @@ class MainWindow(QMainWindow):
         return False, None
 
     def import_csv(self):
-        file_names, _ = QFileDialog.getOpenFileNames(
-            self, 
-            "Import CSV Files", 
-            "", 
-            "CSV Files (*.csv)"
-        )
+        file_names, _ = QFileDialog.getOpenFileNames(self, "Import CSV Files", "", "CSV Files (*.csv)")
         
         if file_names:
             imported_count = 0
@@ -901,50 +272,36 @@ class MainWindow(QMainWindow):
             
             for file_name in file_names:
                 try:
-                    # First read the CSV data to get metadata
                     with open(file_name, newline='') as csvfile:
                         csvreader = csv.reader(csvfile)
-                        headers = next(csvreader)  # Get header row
-                        first_row = next(csvreader)  # Get first data row for metadata
-                        csv_rows = [first_row] + list(csvreader)  # Store all data rows
+                        headers = next(csvreader)  # Skip header row
+                        rows = list(csvreader)
                     
+                    if not rows:
+                        continue
+                        
                     # Get metadata from first row
-                    metadata = dict(zip(headers, first_row))
+                    first_row = rows[0]
+                    snapshot_name = f"{first_row[2]} - {first_row[1]} ({first_row[0]})"
+                    timestamp = first_row[2]  # Data column contains timestamp
                     
-                    # Create snapshot name from metadata
-                    snapshot_name = f"{metadata['Data']} - {metadata['Map']} ({metadata['Outcome']})"
+                    # Check for duplicate data
+                    is_duplicate, existing_snapshot = self.db.check_duplicate_data(rows)
                     
-                    with sqlite3.connect(self.db_path) as conn:
-                        cursor = conn.cursor()
-                        
-                        # Check for duplicate data
-                        is_duplicate, existing_snapshot = self.check_duplicate_data(cursor, 
-                            [[row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], row[11]] 
-                             for row in csv_rows])  # Extract only the leaderboard columns
-                        
-                        if is_duplicate:
-                            skipped_count += 1
-                            continue
-                        
-                        # If not duplicate, proceed with import
-                        timestamp = metadata['Data']  # Use the date from CSV
-                        
-                        for row in csv_rows:
-                            # Extract only the leaderboard columns (rank through captures)
-                            leaderboard_data = [row[3], row[4], row[5], row[6], row[7], row[8], row[9], row[10], row[11]]
-                            cursor.execute(
-                                'INSERT INTO snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                                leaderboard_data + [snapshot_name, timestamp]
-                            )
-                            cursor.execute("""
-                                INSERT OR IGNORE INTO players 
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """, leaderboard_data)
-                        
-                        conn.commit()
-                        self.current_snapshot = snapshot_name
-                        imported_count += 1
-                        
+                    if is_duplicate:
+                        skipped_count += 1
+                        self.statusBar().showMessage(
+                            f"Skipped duplicate data (matches snapshot: {existing_snapshot})", 
+                            3000
+                        )
+                        continue
+                    
+                    # Import the snapshot if not duplicate
+                    self.db.import_snapshot(snapshot_name, timestamp, rows)
+                    imported_count += 1
+                    self.current_snapshot = snapshot_name
+                    self.statusBar().showMessage(f"Imported: {snapshot_name}", 3000)
+
                 except Exception as e:
                     QMessageBox.critical(self, "Error", 
                         f"Failed to import {os.path.basename(file_name)}: {str(e)}")
@@ -961,61 +318,14 @@ class MainWindow(QMainWindow):
         dialog = SnapshotViewerDialog(self)
         dialog.exec_()
 
-    def deleteSelectedRows(self):
-        if not self.table.selectedItems():
-            return
-            
-        reply = QMessageBox.question(self, 'Delete Rows',
-                                   'Are you sure you want to delete selected rows?',
-                                   QMessageBox.Yes | QMessageBox.No)
-                                   
-        if reply == QMessageBox.Yes:
-            rows = set()
-            for item in self.table.selectedItems():
-                rows.add(item.row())
-            
-            try:
-                with sqlite3.connect(self.db_path) as conn:
-                    cursor = conn.cursor()
-                    for row in sorted(rows, reverse=True):
-                        name = self.table.item(row, 0).text()  # Name is now in column 0
-                        
-                        # Delete from snapshots first
-                        cursor.execute("""
-                            DELETE FROM snapshots 
-                            WHERE name = ?
-                        """, (name,))
-                        
-                        # Then delete from players
-                        cursor.execute("""
-                            DELETE FROM players 
-                            WHERE name = ?
-                        """, (name,))
-                        
-                        self.table.removeRow(row)
-                    conn.commit()
-                    
-                # Refresh the view to ensure consistency
-                self.load_data_from_db()
-                
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to delete rows: {str(e)}")
-                self.load_data_from_db()  # Refresh in case of partial deletion
-
     def eventFilter(self, source, event):
-        if (source is self.table and event.type() == event.KeyPress 
-            and event.key() == Qt.Key_Delete):
-            self.deleteSelectedRows()
-            return True
+        # Remove delete key handling
         return super().eventFilter(source, event)
 
     def tableContextMenuEvent(self, event):
         context_menu = QMenu(self)
         
-        delete_action = QAction("Delete", self)
-        delete_action.triggered.connect(self.deleteSelectedRows)
-        context_menu.addAction(delete_action)
-        
+        # Keep only the selection actions
         select_all_action = QAction("Select All", self)
         select_all_action.triggered.connect(self.table.selectAll)
         context_menu.addAction(select_all_action)
@@ -1033,20 +343,100 @@ class MainWindow(QMainWindow):
             self.current_snapshot = None
 
     def on_row_double_clicked(self, row, column):
-        player_name = self.table.item(row, 0).text()  # Name is in first column
+        player_name = self.table.item(row, 0).text()
         dialog = PlayerDetailsDialog(self, player_name)
         dialog.exec_()
 
-class NumericSortItem(QTableWidgetItem):
-    def __init__(self, value):
-        super().__init__(str(value))
-        self._value = float(value)
+    def on_item_clicked(self, item):
+        """Select the entire row when any cell is clicked"""
+        self.table.selectRow(item.row())
 
-    def __lt__(self, other):
-        return self._value < other._value
+    def auto_backup(self):
+        """Perform automatic database backup"""
+        try:
+            backup_path = self.db.backup_database()
+            self.statusBar().showMessage(f"Backup created: {backup_path}", 3000)
+        except Exception as e:
+            self.statusBar().showMessage(f"Backup failed: {str(e)}", 5000)
+
+    def restore_from_backup(self):
+        """Restore database from a backup file"""
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "Select Backup File", "", "Database Backup (*.backup)")
+        
+        if file_name:
+            reply = QMessageBox.warning(self, 'Restore Database',
+                'This will overwrite the current database. Continue?',
+                QMessageBox.Yes | QMessageBox.No)
+            
+            if reply == QMessageBox.Yes:
+                try:
+                    self.db.restore_backup(file_name)
+                    self.load_data_from_db()
+                    QMessageBox.information(self, "Success", 
+                        "Database restored successfully!")
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", 
+                        f"Failed to restore database: {str(e)}")
+
+    def check_for_new_files(self):
+        """Check for new CSV files in the import directory"""
+        # Create import directory if it doesn't exist
+        if not os.path.exists(IMPORT_DIR):
+            os.makedirs(IMPORT_DIR, exist_ok=True)
+            return
+
+        # Get all CSV files in the import directory using the correct path
+        csv_files = glob.glob(os.path.join(IMPORT_DIR, "*_processed.csv"))
+        if not csv_files:
+            return
+
+        new_files = []
+        for file_path in csv_files:
+            try:
+                with open(file_path, newline='') as csvfile:
+                    csvreader = csv.reader(csvfile)
+                    headers = next(csvreader)  # Skip header row
+                    rows = list(csvreader)
+                    
+                    if rows:
+                        is_duplicate, _ = self.db.check_duplicate_data(rows)
+                        if not is_duplicate:
+                            new_files.append(file_path)
+            except Exception as e:
+                print(f"Error checking file {file_path}: {e}")
+
+        if new_files:
+            dialog = ImportOnStartupDialog(
+                [os.path.basename(f) for f in new_files], 
+                self
+            )
+            if dialog.exec_() == QDialog.Accepted:
+                selected_files = dialog.get_selected_files()
+                for filename in selected_files:
+                    file_path = os.path.join(IMPORT_DIR, filename)
+                    try:
+                        with open(file_path, newline='') as csvfile:
+                            csvreader = csv.reader(csvfile)
+                            headers = next(csvreader)
+                            rows = list(csvreader)
+                            
+                            if rows:
+                                first_row = rows[0]
+                                snapshot_name = f"{first_row[2]} - {first_row[1]} ({first_row[0]})"
+                                timestamp = first_row[2]
+                                
+                                self.db.import_snapshot(snapshot_name, timestamp, rows)
+                                self.statusBar().showMessage(f"Imported: {filename}", 3000)
+                    except Exception as e:
+                        QMessageBox.critical(self, "Error", 
+                            f"Failed to import {filename}: {str(e)}")
+
+                self.load_data_from_db()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
+    window.check_for_new_files()  # Add this line before showing the window
     window.show()
     sys.exit(app.exec_())
