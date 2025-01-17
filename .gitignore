@@ -5,3 +5,6 @@ leaderboard.db
 /components/workflow
 *.backup
 *.pyc
+*.db-shm
+*.db-wal
+imported_files.json

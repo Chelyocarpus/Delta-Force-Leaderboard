@@ -1,313 +1,262 @@
-from PyQt5.QtWidgets import (
-    QDialog, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
-    QHBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QInputDialog, QApplication
-)
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer
-from ..widgets.numeric_sort import NumericSortItem
-from ...utils.constants import (
-    SNAPSHOT_WINDOW_SIZE, SNAPSHOT_TABLE_COLUMNS
-)
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, 
+                           QTableWidgetItem, QPushButton, QLineEdit, QLabel,
+                           QHeaderView, QMessageBox, QComboBox, QApplication)
+from PyQt5.QtCore import Qt
+from .match_details import MatchDetailsDialog
+from .purge_confirm import PurgeConfirmDialog
 
 class SnapshotViewerDialog(QDialog):
-    snapshot_deleted = pyqtSignal(str)
-    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
-        self.setWindowTitle("Snapshot Viewer")
-        self.setGeometry(200, 200, 1200, 600)
-        
+        self.setWindowTitle("Match History")
+        self.setModal(True)
+        self.setMinimumSize(800, 600)
         self.init_ui()
         self.refresh_snapshots()
+        
+        # Add double-click handler
+        self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
 
     def init_ui(self):
-        main_layout = QHBoxLayout()
-        
-        # Left panel
-        left_panel = QVBoxLayout()
-        
-        # Search bar
+        layout = QVBoxLayout()
+
+        # Search bar setup
         search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search snapshots...")
+        self.search_input.setPlaceholderText("Search matches...")
         self.search_input.textChanged.connect(self.refresh_snapshots)
         search_layout.addWidget(QLabel("Search:"))
         search_layout.addWidget(self.search_input)
-        left_panel.addLayout(search_layout)
-        
-        # Overview table
-        self.overview_table = QTableWidget()
-        self.overview_table.setColumnCount(3)
-        self.overview_table.setHorizontalHeaderLabels(["Date", "Map", "Outcome"])
-        self.overview_table.setSortingEnabled(True)
-        self.overview_table.selectionModel().selectionChanged.connect(self.on_overview_selection)
-        left_panel.addWidget(self.overview_table)
-        
-        # Control buttons
-        buttons_layout = QHBoxLayout()
-        delete_btn = QPushButton("Delete Selected")
-        delete_btn.clicked.connect(self.delete_selected_snapshot)
-        buttons_layout.addWidget(delete_btn)
-        
-        purge_btn = QPushButton("Purge Database")
-        purge_btn.setStyleSheet("background-color: #ff6b6b;")
-        purge_btn.clicked.connect(self.purge_database)
-        buttons_layout.addWidget(purge_btn)
-        
-        left_panel.addLayout(buttons_layout)
-        
-        left_widget = QWidget()
-        left_widget.setLayout(left_panel)
-        main_layout.addWidget(left_widget, 1)
-        
-        # Right panel
-        right_panel = QVBoxLayout()
-        
+        layout.addLayout(search_layout)
+
+        # Create enhanced table
         self.table = QTableWidget()
-        self.table.setColumnCount(len(SNAPSHOT_TABLE_COLUMNS))
-        self.table.setHorizontalHeaderLabels(SNAPSHOT_TABLE_COLUMNS)
-        self.table.setSortingEnabled(True)
+        self.table.setColumnCount(8)  # Reduced column count
+        self.table.setHorizontalHeaderLabels([
+            "Date", "Map", "Outcome", "Team", "Players",
+            "Total Score", "Top Player", "Top Score"
+        ])
+        
+        # Set table properties
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
-        self.table.itemClicked.connect(self.on_item_clicked)
-        right_panel.addWidget(self.table)
         
-        right_widget = QWidget()
-        right_widget.setLayout(right_panel)
-        main_layout.addWidget(right_widget, 2)
+        # Set column properties with stretch mode
+        header = self.table.horizontalHeader()
+        for i in range(self.table.columnCount()):
+            header.setSectionResizeMode(i, QHeaderView.Stretch)
         
-        self.setLayout(main_layout)
-        self.snapshot_deleted.connect(self.parent.on_snapshot_deleted)
+        layout.addWidget(self.table)
+
+        # Add filter options
+        filter_layout = QHBoxLayout()
+        filter_layout.addWidget(QLabel("Filters:"))
+        
+        # Date filter
+        self.date_filter = QComboBox()
+        self.date_filter.addItem("All Dates")
+        filter_layout.addWidget(QLabel("Date:"))
+        filter_layout.addWidget(self.date_filter)
+        
+        # Map filter
+        self.map_filter = QComboBox()
+        self.map_filter.addItem("All Maps")
+        filter_layout.addWidget(QLabel("Map:"))
+        filter_layout.addWidget(self.map_filter)
+        
+        # Outcome filter
+        self.outcome_filter = QComboBox()
+        self.outcome_filter.addItems(["All Outcomes", "Victory", "Defeat"])
+        filter_layout.addWidget(QLabel("Outcome:"))
+        filter_layout.addWidget(self.outcome_filter)
+        
+        # Connect filter signals
+        self.date_filter.currentTextChanged.connect(self.refresh_snapshots)
+        self.map_filter.currentTextChanged.connect(self.refresh_snapshots)
+        self.outcome_filter.currentTextChanged.connect(self.refresh_snapshots)
+        
+        layout.addLayout(filter_layout)
+
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        # Add purge button with red styling
+        purge_button = QPushButton("Purge Database")
+        purge_button.setStyleSheet("background-color: #ff4444; color: white; font-weight: bold;")
+        purge_button.clicked.connect(self.purge_database)
+        button_layout.addWidget(purge_button)
+        
+        view_button = QPushButton("View Details")
+        view_button.clicked.connect(self.view_selected_snapshot)
+        button_layout.addWidget(view_button)
+        
+        delete_button = QPushButton("Delete")
+        delete_button.clicked.connect(self.delete_selected_snapshot)
+        button_layout.addWidget(delete_button)
+        
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        button_layout.addWidget(close_button)
+        
+        layout.addLayout(button_layout)
+        self.setLayout(layout)
+        self.load_filters()
+
+    def load_filters(self):
+        """Load filter options from database"""
+        with self.parent.db.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Load dates
+            cursor.execute("SELECT DISTINCT match_date FROM matches ORDER BY match_date DESC")
+            dates = cursor.fetchall()
+            self.date_filter.addItems([row[0] for row in dates])
+            
+            # Load maps
+            cursor.execute("SELECT DISTINCT map FROM matches ORDER BY map")
+            maps = cursor.fetchall()
+            self.map_filter.addItems([row[0] for row in maps])
 
     def refresh_snapshots(self):
-        self.overview_table.setSortingEnabled(False)
+        self.table.setRowCount(0)
         search_text = self.search_input.text().lower()
+        map_filter = self.map_filter.currentText()
+        outcome_filter = self.outcome_filter.currentText()
+        date_filter = self.date_filter.currentText()
         
         with self.parent.db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("""
-                SELECT DISTINCT timestamp,
-                    SUBSTR(snapshot_name, INSTR(snapshot_name, ' - ') + 3, 
-                        INSTR(snapshot_name, ' (') - INSTR(snapshot_name, ' - ') - 3) as map_name,
-                    SUBSTR(snapshot_name, INSTR(snapshot_name, '('), 
-                        LENGTH(snapshot_name) - INSTR(snapshot_name, '(') + 1) as outcome,
-                    snapshot_name
-                FROM snapshots 
-                WHERE LOWER(snapshot_name) LIKE ?
-                ORDER BY timestamp DESC
-            """, (f'%{search_text}%',))
-            snapshots = cursor.fetchall()
             
-            self.overview_table.setRowCount(len(snapshots))
-            for row, data in enumerate(snapshots):
-                self.overview_table.setItem(row, 0, QTableWidgetItem(data[0]))
-                self.overview_table.setItem(row, 1, QTableWidgetItem(data[1]))
-                self.overview_table.setItem(row, 2, QTableWidgetItem(data[2]))
-                self.overview_table.item(row, 0).setData(Qt.UserRole, data[3])
-        
-        self.overview_table.resizeColumnsToContents()
-        self.overview_table.setSortingEnabled(True)
-    
-    def on_overview_selection(self, selected, deselected):
-        try:
-            # Ignore selection while loading
-            if not selected.indexes() or getattr(self, '_loading', False):
-                return
-
-            self._loading = True  # Set loading flag
-            self.overview_table.setEnabled(False)  # Disable overview table
-            QApplication.processEvents()  # Let UI update
-
-            row = selected.indexes()[0].row()
-            snapshot_name = self.overview_table.item(row, 0).data(Qt.UserRole)
-            print(f"\nSelected snapshot row {row}, name: {snapshot_name}")
+            query = """
+                SELECT 
+                    match_date,
+                    map,
+                    outcome,
+                    team,
+                    COUNT(DISTINCT player_name) as player_count,
+                    SUM(score) as total_score,
+                    (SELECT player_name FROM matches m2 
+                     WHERE m2.match_date = m1.match_date 
+                     AND m2.map = m1.map 
+                     AND m2.team = m1.team 
+                     ORDER BY score DESC LIMIT 1) as top_player,
+                    MAX(score) as top_score,
+                    outcome || ' - ' || map || ' - ' || match_date || ' - ' || team as snapshot_name
+                FROM matches m1
+                WHERE (LOWER(map) LIKE ? OR LOWER(outcome) LIKE ?)
+                    AND (? = 'All Maps' OR map = ?)
+                    AND (? = 'All Outcomes' OR 
+                         (? = 'Victory' AND outcome LIKE '%VICTORY%') OR 
+                         (? = 'Defeat' AND outcome LIKE '%DEFEAT%'))
+                    AND (? = 'All Dates' OR match_date = ?)
+                GROUP BY match_date, map, outcome, team
+                ORDER BY match_date DESC, map ASC
+            """
             
-            if snapshot_name:
-                # Use shorter delay for better responsiveness
-                QTimer.singleShot(50, lambda: self.delayed_load_snapshot(snapshot_name))
-            else:
-                print("No snapshot name found for row")
-                self._loading = False
-                self.overview_table.setEnabled(True)
+            cursor.execute(query, (
+                f'%{search_text}%', f'%{search_text}%',
+                map_filter, map_filter,
+                outcome_filter, outcome_filter, outcome_filter,
+                date_filter, date_filter
+            ))
+            
+            for row_idx, row_data in enumerate(cursor.fetchall()):
+                self.table.insertRow(row_idx)
+                date, map_name, outcome, team, player_count, total_score, top_player, top_score, match_id = row_data
                 
-        except Exception as e:
-            print(f"Error in snapshot selection: {str(e)}")
-            self._loading = False
-            self.overview_table.setEnabled(True)
+                items = [
+                    (date, Qt.AlignCenter),
+                    (map_name, Qt.AlignLeft),
+                    (outcome, Qt.AlignCenter),
+                    (team, Qt.AlignCenter),
+                    (str(player_count), Qt.AlignCenter),
+                    (f"{total_score:,}", Qt.AlignRight),
+                    (top_player, Qt.AlignLeft),
+                    (f"{top_score:,}", Qt.AlignRight)
+                ]
+                
+                for col, (value, alignment) in enumerate(items):
+                    item = QTableWidgetItem(str(value))
+                    item.setTextAlignment(alignment)
+                    if col == 0:  # Store match_id in first column
+                        item.setData(Qt.UserRole, match_id)
+                    self.table.setItem(row_idx, col, item)
 
-    def delayed_load_snapshot(self, snapshot_name):
-        """Load snapshot data with UI updates between chunks"""
-        try:
-            # Clear current data first
-            self.table.clearContents()
-            self.table.setRowCount(0)
-            self.table.setSortingEnabled(False)
-            QApplication.processEvents()
-
-            self.load_selected_snapshot(snapshot_name)
-
-        finally:
-            self._loading = False
-            self.overview_table.setEnabled(True)
-            self.table.setSortingEnabled(True)
-            QApplication.processEvents()
-
-    def load_selected_snapshot(self, snapshot_name):
-        if not snapshot_name:
+    def view_selected_snapshot(self):
+        selected_rows = self.table.selectedItems()
+        if not selected_rows:
             return
             
-        try:
-            with self.parent.db.get_connection() as conn:
-                cursor = conn.cursor()
-                
-                # Get row count first
-                cursor.execute("SELECT COUNT(*) FROM snapshots WHERE snapshot_name = ?", (snapshot_name,))
-                total_rows = cursor.fetchone()[0]
-                if not total_rows:
-                    return
-                    
-                print(f"Loading {total_rows} rows for snapshot: {snapshot_name}")
-                self.table.setRowCount(total_rows)
-                
-                # Load data in smaller chunks with more frequent UI updates
-                CHUNK_SIZE = 5  # Reduced chunk size
-                for offset in range(0, total_rows, CHUNK_SIZE):
-                    cursor.execute("""
-                        SELECT 
-                            SUBSTR(snapshot_name, INSTR(snapshot_name, '('), 
-                                LENGTH(snapshot_name) - INSTR(snapshot_name, '(') + 1) as outcome,
-                            SUBSTR(snapshot_name, INSTR(snapshot_name, ' - ') + 3, 
-                                INSTR(snapshot_name, ' (') - INSTR(snapshot_name, ' - ') - 3) as map_name,
-                            timestamp as date,
-                            team, rank, class, name, score,
-                            kills, deaths, assists, revives, captures,
-                            combat_medal, capture_medal, logistics_medal, intelligence_medal
-                        FROM snapshots 
-                        WHERE snapshot_name = ?
-                        ORDER BY score DESC
-                        LIMIT ? OFFSET ?
-                    """, (snapshot_name, CHUNK_SIZE, offset))
-                    
-                    chunk_data = cursor.fetchall()
-                    self.populate_chunk(chunk_data, offset)
-                    QApplication.processEvents()  # Process events after each chunk
-                
-                # Final UI update
-                self.table.resizeColumnsToContents()
-                print("Finished loading snapshot data")
-                
-        except Exception as e:
-            print(f"Error loading snapshot: {str(e)}")
-            self.table.setRowCount(0)
-
-    def populate_chunk(self, chunk_data, start_row):
-        """Populate a chunk of data into the table"""
-        for i, row in enumerate(chunk_data):
-            table_row = start_row + i
-            try:
-                row_list = list(row)
-                row_list = ['' if v is None else v for v in row_list]
-                reordered = tuple(row_list[:3] + [row_list[3], row_list[4]] + row_list[5:])
-                
-                for col, value in enumerate(reordered):
-                    if col in (0, 1, 2, 3, 5, 6) or col >= 13:
-                        item = QTableWidgetItem(str(value))
-                    else:
-                        item = NumericSortItem(value if value != '' else 0)
-                        item.setTextAlignment(Qt.AlignCenter)
-                    self.table.setItem(table_row, col, item)
-                    
-            except Exception as e:
-                print(f"Error processing row {table_row}: {str(e)}")
-                continue
-
-    def populate_table(self, data):
-        try:
-            self.table.setRowCount(len(data))
-            for row, record in enumerate(data):
-                for col, value in enumerate(record):
-                    try:
-                        if col in (0, 1, 2, 3, 5, 6) or col >= 13:  # Text columns including medals
-                            item = QTableWidgetItem(str(value) if value is not None else "")
-                        else:  # Numeric columns
-                            if value is not None and value != '':
-                                item = NumericSortItem(value)
-                            else:
-                                item = NumericSortItem(0)
-                            item.setTextAlignment(Qt.AlignCenter)
-                        self.table.setItem(row, col, item)
-                    except Exception as e:
-                        print(f"Error setting cell [{row}][{col}] = {value}: {str(e)}")
-                        self.table.setItem(row, col, QTableWidgetItem("Error"))
-        except Exception as e:
-            print(f"Error populating table: {str(e)}")
-            self.table.setRowCount(0)
-            QMessageBox.warning(self, "Error", 
-                f"Failed to display snapshot data: {str(e)}")
+        snapshot_name = self.table.item(selected_rows[0].row(), 0).data(Qt.UserRole)
+        # Add your snapshot detail viewing logic here
+        QMessageBox.information(self, "Match Details", f"Viewing match: {snapshot_name}")
 
     def delete_selected_snapshot(self):
-        selected_items = self.overview_table.selectedItems()
-        if not selected_items:
+        selected_rows = self.table.selectedItems()
+        if not selected_rows:
             return
             
-        row = selected_items[0].row()
-        snapshot_name = self.overview_table.item(row, 0).data(Qt.UserRole)
+        match_id = self.table.item(selected_rows[0].row(), 0).data(Qt.UserRole)
         
-        reply = QMessageBox.question(self, 'Delete Snapshot',
-                                   f'Are you sure you want to delete "{snapshot_name}"?',
-                                   QMessageBox.Yes | QMessageBox.No)
-        
+        reply = QMessageBox.question(self, 'Delete Match',
+            f'Are you sure you want to delete this match?\n{match_id}',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            
         if reply == QMessageBox.Yes:
             try:
-                self.parent.db.delete_snapshot(snapshot_name)
-                self.refresh_snapshots()
-                self.parent.load_data_from_db()
-                self.snapshot_deleted.emit(snapshot_name)
-                
-                if self.overview_table.rowCount() > 0:
-                    first_snapshot = self.overview_table.item(0, 0).data(Qt.UserRole)
-                    self.load_selected_snapshot(first_snapshot)
-                else:
-                    self.table.setRowCount(0)
-                
-                QMessageBox.information(self, "Success", 
-                    f"Snapshot '{snapshot_name}' deleted successfully")
+                with self.parent.db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    # Use the match_id directly as snapshot_name
+                    cursor.execute("DELETE FROM matches WHERE snapshot_name = ?", (match_id,))
+                    conn.commit()
                     
+                self.refresh_snapshots()  # Refresh the view
+                self.parent.on_snapshot_deleted(match_id)  # Notify parent
+                QMessageBox.information(self, "Success", "Match deleted successfully")
+                
             except Exception as e:
-                QMessageBox.critical(self, "Error", 
-                    f"Failed to delete snapshot: {str(e)}")
+                QMessageBox.critical(self, "Error", f"Failed to delete match: {str(e)}")
+
+    def on_row_double_clicked(self, row, _):  # Use underscore for unused parameter
+        snapshot_name = self.table.item(row, 0).data(Qt.UserRole)  # Get match_id from UserRole data of first column
+        print(f"Debug - Opening match details for: {snapshot_name}")
+        dialog = MatchDetailsDialog(self, snapshot_name)
+        dialog.exec_()
 
     def purge_database(self):
-        reply = QMessageBox.warning(
-            self,
-            "Purge Database",
-            "WARNING: This will permanently delete ALL snapshots!\n\n"
-            "Are you absolutely sure you want to continue?",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            confirm = QMessageBox.warning(
-                self,
-                "Confirm Purge",
-                "This action CANNOT be undone!\n\n"
-                "Type 'PURGE' to confirm:",
-                QMessageBox.Ok
-            )
-            
-            if confirm == QMessageBox.Ok:
-                text, ok = QInputDialog.getText(self, "Final Confirmation", "Type 'PURGE' to confirm:")
-                if ok and text == "PURGE":
-                    try:
-                        self.parent.db.purge_database()
-                        self.refresh_snapshots()
-                        self.table.setRowCount(0)
-                        self.parent.load_data_from_db()
-                        QMessageBox.information(self, "Success", "Database purged successfully")
-                    except Exception as e:
-                        QMessageBox.critical(self, "Error", f"Failed to purge database: {str(e)}")
-
-    def on_item_clicked(self, item):
-        """Select the entire row when any cell is clicked"""
-        self.table.selectRow(item.row())
+        """Purge all data from database after confirmation"""
+        dialog = PurgeConfirmDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            try:
+                # Clear the table first to release any connections
+                self.table.clearContents()
+                self.table.setRowCount(0)
+                
+                # Clear filters
+                self.date_filter.clear()
+                self.date_filter.addItem("All Dates")
+                self.map_filter.clear()
+                self.map_filter.addItem("All Maps")
+                
+                # Process events to ensure UI updates are complete
+                QApplication.processEvents()
+                
+                if self.parent.db.purge_database():
+                    # Clear import tracking
+                    self.parent.import_manager.clear_tracking()
+                    
+                    # Refresh displays
+                    self.refresh_snapshots()
+                    self.parent.load_data_from_db()
+                    
+                    QMessageBox.information(self, "Success", 
+                        "Database has been purged successfully.\nA backup was created before purging.")
+                else:
+                    QMessageBox.critical(self, "Error", 
+                        "Failed to purge database.")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", 
+                    f"Error during database purge: {str(e)}")

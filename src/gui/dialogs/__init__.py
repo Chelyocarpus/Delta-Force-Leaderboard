@@ -1,3 +1,3 @@
-from .import_on_startup import ImportOnStartupDialog
+from .import_on_startup import ImportStartupDialog, ImportManager
 
-__all__ = ['ImportOnStartupDialog']
+__all__ = ['ImportStartupDialog', 'ImportManager']

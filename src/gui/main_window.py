@@ -29,6 +29,13 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(QWidget())
         self.layout = QVBoxLayout(self.centralWidget())
         
+    def showEvent(self, event):
+        """Run import check after window is shown"""
+        super().showEvent(event)
+        from .dialogs.import_on_startup import run_import_check
+        run_import_check()
+        self.load_data_from_db()  # Refresh the table after potential imports
+        
     def _init_database(self) -> None:
         """Initialize database connection and medal processor"""
         self.db = Database()
@@ -86,5 +93,25 @@ class MainWindow(QMainWindow):
             setting: self.settings.value(setting)
             for setting in common_settings
         }
+
+    def closeEvent(self, event) -> None:
+        """Save window state before closing"""
+        self.settings.setValue('windowGeometry', self.saveGeometry())
+        self.settings.setValue('windowState', self.saveState())
+        super().closeEvent(event)
+
+    def restore_window_state(self) -> None:
+        """Restore window geometry and state"""
+        geometry = self.settings.value('windowGeometry')
+        state = self.settings.value('windowState')
+        
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        if state is not None:
+            self.restoreState(state)
+        else:
+            # Fallback to default size if no saved state
+            self.resize(*MAIN_WINDOW_SIZE)
+            self.move(100, 100)  # Default position
 
     # ...existing code for other methods...

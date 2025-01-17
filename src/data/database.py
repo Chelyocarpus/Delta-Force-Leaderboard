@@ -1,331 +1,359 @@
 import sqlite3
+import pandas as pd
 import os
+from datetime import datetime
 import shutil
+import csv
+from pathlib import Path
+from typing import List
 import time
-from queue import Queue
-from threading import Lock
-from ..utils.constants import DB_PATH
 
 class Database:
     def __init__(self):
-        self.db_path = DB_PATH
-        self._connection_pool = Queue(maxsize=10)
-        self._pool_lock = Lock()
-        self._init_pool()
-        self.init_database()
-        self.optimize_database()
+        # Get the project root directory (3 levels up from src/data/database.py)
+        self.base_path = Path(__file__).resolve().parent.parent.parent
+        # Create data directory if it doesn't exist
+        self.data_dir = self.base_path / 'data'
+        self.data_dir.mkdir(exist_ok=True)
         
-    def _init_pool(self):
-        """Initialize connection pool"""
-        for _ in range(10):
-            conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row  # Enable row factory for better performance
-            self._connection_pool.put(conn)
+        # Set database path relative to data directory
+        self.db_path = str(self.data_dir / 'leaderboard.db')
+        print(f"Debug - Using database at: {self.db_path}")
+        
+        self.create_database()
 
     def get_connection(self):
-        """Get a connection from the pool"""
-        with self._pool_lock:
-            return self._connection_pool.get()
+        """Get a database connection"""
+        return sqlite3.connect(self.db_path)
 
-    def return_connection(self, conn):
-        """Return connection to the pool"""
-        with self._pool_lock:
-            self._connection_pool.put(conn)
+    def create_database(self):
+        """Create database and required tables if they don't exist"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Create matches table with all required fields
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS matches (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_name TEXT,
+                match_date TEXT,
+                outcome TEXT,
+                map TEXT,
+                team TEXT,
+                rank INTEGER,
+                class TEXT,
+                player_name TEXT,
+                score INTEGER,
+                kills INTEGER,
+                deaths INTEGER,
+                assists INTEGER,
+                revives INTEGER,
+                captures INTEGER,
+                combat_medal TEXT,
+                capture_medal TEXT,
+                logistics_medal TEXT,
+                intelligence_medal TEXT
+            )
+        ''')
+        
+        # Create index for commonly queried fields
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_player_name ON matches(player_name)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_match_date ON matches(match_date)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_snapshot ON matches(snapshot_name)')
+        
+        conn.commit()
+        conn.close()
 
-    def execute_query(self, query, params=None):
-        """Execute query using connection pool"""
-        conn = self.get_connection()
+    def get_imported_match_identifiers(self) -> List[tuple]:
+        """Get list of all unique match identifiers in database"""
         try:
-            cursor = conn.cursor()
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            return cursor.fetchall()
-        finally:
-            self.return_connection(conn)
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT DISTINCT match_date, outcome, map, team 
+                    FROM matches
+                """)
+                return cursor.fetchall()
+        except Exception as e:
+            print(f"Error getting imported matches: {e}")
+            return []
 
-    def init_database(self):
-        """Initialize the database and create tables if they don't exist"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
+    def is_duplicate_file(self, file_path: str) -> bool:
+        """Check if file content has already been imported"""
+        try:
+            with open(file_path, 'r', newline='') as csvfile:
+                csvreader = csv.reader(csvfile)
+                headers = next(csvreader)  # Skip header
+                rows = list(csvreader)  # Get all rows
+                
+                if not rows:
+                    return False
+                    
+                first_row = rows[0]
+                imported_matches = self.get_imported_match_identifiers()
+                
+                # Check if this match's metadata matches any in database
+                # Reorder to match_date, outcome, map, team
+                match_data = (first_row[2], first_row[0], first_row[1], first_row[3])
+                return match_data in imported_matches
+                    
+        except Exception as e:
+            print(f"Error checking for duplicates: {e}")
+            return False
+
+    def import_csv(self, file_path):
+        """Import CSV file into database"""
+        if self.is_duplicate_file(file_path):
+            return False
             
-            # Create base tables
-            cursor.execute('''CREATE TABLE IF NOT EXISTS snapshots (
-                rank INTEGER, class TEXT, team TEXT, name TEXT, score INTEGER,
-                kills INTEGER, deaths INTEGER, assists INTEGER,
-                revives INTEGER, captures INTEGER,
-                combat_medal TEXT, capture_medal TEXT,
-                logistics_medal TEXT, intelligence_medal TEXT,
-                snapshot_name TEXT, timestamp DATETIME,
-                map TEXT)''')  # Added map column
+        try:
+            # Read CSV file
+            df = pd.read_csv(file_path)
             
-            # Add medal columns if they don't exist
-            cursor.execute("PRAGMA table_info(snapshots)")
-            columns = [col[1] for col in cursor.fetchall()]
+            # Add snapshot_name column based on first row
+            first_row = df.iloc[0]
+            snapshot_name = f"{first_row['Outcome']} - {first_row['Map']} - {first_row['Data']} - {first_row['Team']}"
+            df['snapshot_name'] = snapshot_name
             
-            medal_columns = {
-                'combat_medal': 'TEXT',
-                'capture_medal': 'TEXT',
-                'logistics_medal': 'TEXT',
-                'intelligence_medal': 'TEXT'
+            # Rename columns to match database schema
+            column_mapping = {
+                'Outcome': 'outcome',
+                'Map': 'map',
+                'Data': 'match_date',
+                'Team': 'team',
+                'Rank': 'rank',
+                'Class': 'class',
+                'Name': 'player_name',
+                'Score': 'score',
+                'Kills': 'kills',
+                'Deaths': 'deaths',
+                'Assists': 'assists',
+                'Revives': 'revives',
+                'Captures': 'captures',
+                'Combat Medal': 'combat_medal',
+                'Capture Medal': 'capture_medal',
+                'Logistics Medal': 'logistics_medal',
+                'Intelligence Medal': 'intelligence_medal'
             }
             
-            for col_name, col_type in medal_columns.items():
-                if col_name not in columns:
-                    cursor.execute(f"ALTER TABLE snapshots ADD COLUMN {col_name} {col_type}")
+            df.rename(columns=column_mapping, inplace=True)
             
-            # Add map column if it doesn't exist
-            if 'map' not in columns:
-                cursor.execute("ALTER TABLE snapshots ADD COLUMN map TEXT")
-                # Migrate existing data
-                cursor.execute("""
-                    UPDATE snapshots 
-                    SET map = TRIM(REPLACE(
-                        substr(snapshot_name, 1, 
-                            CASE 
-                                WHEN instr(snapshot_name, ' - ') > 0 
-                                THEN instr(snapshot_name, ' - ') - 1
-                                ELSE length(snapshot_name)
-                            END
-                        ),
-                        'ATTACK', ''
-                    ))
-                    WHERE map IS NULL
-                """)
+            # Import to database
+            with sqlite3.connect(self.db_path) as conn:
+                df.to_sql('matches', conn, if_exists='append', index=False)
             
-            # Rest of table creation
-            cursor.execute('''CREATE TABLE IF NOT EXISTS players (
-                rank INTEGER, class TEXT, team TEXT, name TEXT, score INTEGER,
-                kills INTEGER, deaths INTEGER, assists INTEGER,
-                revives INTEGER, captures INTEGER)''')
-                
-            cursor.execute('''CREATE TABLE IF NOT EXISTS medals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT,
-                category TEXT,
-                rank TEXT,
-                snapshot_name TEXT,
-                timestamp DATETIME,
-                UNIQUE(name, category, snapshot_name))''')
-                
-            conn.commit()
-
-    def optimize_database(self):
-        """Optimize database performance"""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("PRAGMA journal_mode=WAL")  # Write-Ahead Logging
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA temp_store=MEMORY")
-            conn.execute("PRAGMA mmap_size=30000000000")
-            conn.execute("VACUUM")
+            return True
+            
+        except Exception as e:
+            print(f"Error importing CSV: {e}")
+            return False
 
     def backup_database(self):
-        """Create a timestamped backup of the database"""
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        backup_path = f"{self.db_path}.{timestamp}.backup"
-        with sqlite3.connect(self.db_path) as conn:
-            backup = sqlite3.connect(backup_path)
-            conn.backup(backup)
-            backup.close()
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        backup_filename = f'leaderboard_{timestamp}.backup'
+        backup_path = str(self.data_dir / backup_filename)
+        shutil.copy2(self.db_path, backup_path)
         return backup_path
 
     def restore_backup(self, backup_path):
-        """Restore database from backup"""
         if os.path.exists(backup_path):
-            with sqlite3.connect(backup_path) as backup:
-                with sqlite3.connect(self.db_path) as conn:
-                    backup.backup(conn)
+            # Close any existing connections
+            try:
+                conn = sqlite3.connect(self.db_path)
+                conn.close()
+            except:
+                pass
+            
+            shutil.copy2(backup_path, self.db_path)
             return True
         return False
 
     def check_duplicate_data(self, rows):
-        """Check if the data already exists in the database"""
-        # Create normalized data hash for comparison
-        data_hash = []
-        for row in rows:
-            # Extract key fields in same order as stored in database
-            try:
-                rank = int(row[4])
-                class_name = row[5]
-                team = row[3].upper() if row[3] else None
-                name = row[6]
-                score = int(row[7])
-                kills = int(row[8])
-                deaths = int(row[9])
-                assists = int(row[10])
-                revives = int(row[11])
-                captures = int(row[12])
-                
-                # Create hash string with all fields
-                hash_str = f"{rank}|{class_name}|{team}|{name}|{score}|{kills}|{deaths}|{assists}|{revives}|{captures}"
-                data_hash.append(hash_str)
-            except (IndexError, ValueError):
-                continue
-                
-        data_hash = sorted(data_hash)  # Sort for consistent comparison
-
-        # Compare with existing snapshots
-        with sqlite3.connect(self.db_path) as conn:
+        """
+        Sophisticated duplicate check that looks at:
+        1. Match metadata (outcome, map, date, team)
+        2. Player count and names
+        3. Score totals and key statistics
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT snapshot_name FROM snapshots")
-            snapshots = cursor.fetchall()
             
-            for snapshot in snapshots:
-                cursor.execute("""
-                    SELECT rank, class, team, name, score, kills, deaths, assists, revives, captures 
-                    FROM snapshots 
-                    WHERE snapshot_name = ?
-                    ORDER BY rank
-                """, (snapshot[0],))
-                existing_data = cursor.fetchall()
+            if not rows:
+                return False, None
                 
-                # Create hash for existing data
-                existing_hash = []
-                for row in existing_data:
-                    hash_str = '|'.join(str(x) if x is not None else '' for x in row)
-                    existing_hash.append(hash_str)
-                existing_hash = sorted(existing_hash)
+            # Get metadata from first row
+            first_row = rows[0]
+            outcome, map_name, match_date, team = first_row[0:4]
+            
+            # First check: Look for matches with same metadata
+            cursor.execute("""
+                SELECT COUNT(DISTINCT player_name) as player_count,
+                       SUM(score) as total_score,
+                       SUM(kills) as total_kills,
+                       SUM(deaths) as total_deaths,
+                       GROUP_CONCAT(player_name) as players,
+                       outcome || ' - ' || map || ' - ' || match_date || ' - ' || team as match_id
+                FROM matches 
+                WHERE outcome = ? AND map = ? AND match_date = ? AND team = ?
+                GROUP BY outcome, map, match_date, team
+            """, (outcome, map_name, match_date, team))
+            
+            existing_matches = cursor.fetchall()
+            
+            if not existing_matches:
+                return False, None
                 
-                if data_hash == existing_hash:
-                    return True, snapshot[0]
+            # Compare with current data
+            new_player_count = len(rows)
+            new_total_score = sum(int(row[7]) for row in rows)  # Score column
+            new_total_kills = sum(int(row[8]) for row in rows)  # Kills column
+            new_total_deaths = sum(int(row[9]) for row in rows)  # Deaths column
+            new_players = sorted([row[6] for row in rows])  # Player names
+            
+            for match in existing_matches:
+                player_count, total_score, total_kills, total_deaths, players, match_id = match
+                existing_players = sorted(players.split(','))
+                
+                # Check if match statistics are similar enough
+                if (player_count == new_player_count and
+                    abs(total_score - new_total_score) < 100 and  # Allow small variance
+                    abs(total_kills - new_total_kills) < 10 and
+                    abs(total_deaths - new_total_deaths) < 10 and
+                    new_players == existing_players):
+                    
+                    return True, match_id
+            
+            return False, None
+            
+        except Exception as e:
+            print(f"Error checking duplicates: {e}")
+            return False, None
+        finally:
+            if 'conn' in locals():
+                conn.close()
+
+    def get_table_info(self):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = cursor.fetchall()
         
-        return False, None
+        table_info = {}
+        for table in tables:
+            cursor.execute(f"PRAGMA table_info({table[0]})")
+            columns = cursor.fetchall()
+            table_info[table[0]] = [col[1] for col in columns]
+        
+        conn.close()
+        return table_info
 
-    def import_snapshot(self, snapshot_name, timestamp, rows, medals_data=None):
-        """Import a new snapshot into the database"""
-        with sqlite3.connect(self.db_path) as conn:
+    def import_snapshot(self, snapshot_name, rows):
+        """Import match data into database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            
-            # Extract map name from snapshot_name
-            map_name = snapshot_name.split(' - ')[0].replace('ATTACK', '').strip()
             
             for row in rows:
-                try:
-                    # Extract and normalize team value
-                    team = row[3].upper() if row[3] else None  # Normalize to uppercase
-                    if team not in ('ATTACK', 'DEFENSE'):
-                        team = None
-                    
-                    # Rest of data extraction
-                    rank = int(row[4])
-                    class_name = row[5]
-                    name = row[6]
-                    score = int(row[7])
-                    kills = int(row[8])
-                    deaths = int(row[9])
-                    assists = int(row[10])
-                    revives = int(row[11])
-                    captures = int(row[12])
-                    
-                    # Process medal data
-                    combat_medal = row[13] if len(row) > 13 and row[13] != 'None' else None
-                    capture_medal = row[14] if len(row) > 14 and row[14] != 'None' else None
-                    logistics_medal = row[15] if len(row) > 15 and row[15] != 'None' else None
-                    intelligence_medal = row[16] if len(row) > 16 and row[16] != 'None' else None
-
-                    # Insert into snapshots with map name
-                    cursor.execute('''
-                        INSERT INTO snapshots (
-                            rank, class, team, name, score, kills, deaths, assists, revives, captures,
-                            combat_medal, capture_medal, logistics_medal, intelligence_medal,
-                            snapshot_name, timestamp, map
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (
-                        rank, class_name, team, name, score, kills, deaths, assists, revives, captures,
-                        combat_medal, capture_medal, logistics_medal, intelligence_medal,
-                        snapshot_name, timestamp, map_name
-                    ))
-
-                    # Insert medals into medals table
-                    medals = [
-                        ('Combat', combat_medal),
-                        ('Capture', capture_medal),
-                        ('Logistics', logistics_medal),
-                        ('Intelligence', intelligence_medal)
-                    ]
-                    
-                    for category, medal_rank in medals:
-                        if medal_rank and medal_rank != 'None':
-                            cursor.execute("""
-                                INSERT OR REPLACE INTO medals 
-                                (name, category, rank, snapshot_name, timestamp)
-                                VALUES (?, ?, ?, ?, ?)
-                            """, (name, category, medal_rank, snapshot_name, timestamp))
-
-                except (IndexError, ValueError) as e:
-                    print(f"Error processing row for {name}: {e}")
-                    continue
-
-            conn.commit()
-            self._update_players_table()
-
-    def _update_players_table(self):
-        """Update players table with latest data"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT OR REPLACE INTO players (
-                    rank, class, team, name, score, 
-                    kills, deaths, assists, revives, captures
-                )
-                SELECT 
-                    MAX(rank),
-                    class,
-                    team,  -- Include team in aggregation
-                    name,
-                    SUM(score),
-                    SUM(kills),
-                    SUM(deaths),
-                    SUM(assists),
-                    SUM(revives),
-                    SUM(captures)
-                FROM snapshots
-                GROUP BY name, team  -- Group by team as well
-            """)
-            conn.commit()
-
-    def delete_player(self, name):
-        """Delete a player and their data from the database"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM snapshots WHERE name = ?", (name,))
-            cursor.execute("DELETE FROM players WHERE name = ?", (name,))
-            cursor.execute("DELETE FROM medals WHERE name = ?", (name,))
-            conn.commit()
-
-    def delete_snapshot(self, snapshot_name):
-        """Delete a snapshot and clean up orphaned player data"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            # Get all names from this snapshot for cleanup
-            cursor.execute("SELECT name FROM snapshots WHERE snapshot_name = ?", (snapshot_name,))
-            names = [row[0] for row in cursor.fetchall()]
-            
-            # Delete snapshot
-            cursor.execute("DELETE FROM snapshots WHERE snapshot_name = ?", (snapshot_name,))
-            cursor.execute("DELETE FROM medals WHERE snapshot_name = ?", (snapshot_name,))
-            
-            # Clean up orphaned players
-            for name in names:
                 cursor.execute("""
-                    DELETE FROM players 
-                    WHERE name = ? 
-                    AND NOT EXISTS (
-                        SELECT 1 FROM snapshots 
-                        WHERE name = ? 
-                        AND snapshot_name != ?
-                    )
-                """, (name, name, snapshot_name))
+                    INSERT INTO matches (
+                        outcome, map, match_date, team, rank, class,
+                        player_name, score, kills, deaths, assists,
+                        revives, captures, combat_medal, capture_medal,
+                        logistics_medal, intelligence_medal
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, row)
             
             conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            print(f"Error importing match data: {e}")
+            if 'conn' in locals():
+                conn.close()
+            return False
 
-    def purge_database(self):
-        """Delete all data from the database"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM snapshots")
-            cursor.execute("DELETE FROM players")
-            cursor.execute("DELETE FROM medals")
-            conn.commit()
+    def _close_all_connections(self) -> bool:
+        """Try to close all database connections"""
+        try:
+            # Create temporary connection to force other connections to close
+            temp_conn = sqlite3.connect(self.db_path)
+            cursor = temp_conn.cursor()
+            
+            # This will force other connections to close
+            cursor.execute("PRAGMA wal_checkpoint(FULL)")
+            cursor.execute("PRAGMA optimize")
+            temp_conn.commit()
+            
+            # Close our temporary connection
+            cursor.close()
+            temp_conn.close()
+            
+            # Small delay to ensure connections are closed
+            time.sleep(0.5)
+            return True
+        except Exception as e:
+            print(f"Error closing connections: {e}")
+            return False
+
+    def _force_close_connections(self) -> None:
+        """Close all database connections forcefully"""
+        try:
+            # Get a new connection and force close all others
+            temp_conn = sqlite3.connect(self.db_path, timeout=20)
+            temp_cursor = temp_conn.cursor()
+            
+            # Force close other connections
+            temp_cursor.execute("PRAGMA optimize")
+            temp_cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            temp_conn.commit()
+            
+            # Close our connection too
+            temp_cursor.close()
+            temp_conn.close()
+            
+            # Windows needs extra time to release file handles
+            time.sleep(1)
+        except Exception as e:
+            print(f"Error forcing connections closed: {e}")
+
+    def purge_database(self) -> bool:
+        """Delete all data from the database without deleting the file"""
+        try:
+            # Create backup first
+            backup_path = self.backup_database()
+            print(f"Created backup at: {backup_path}")
+            
+            # Instead of deleting file, drop and recreate tables
+            conn = None
+            try:
+                conn = sqlite3.connect(self.db_path, timeout=20)
+                cursor = conn.cursor()
+                
+                # Drop all tables
+                cursor.execute("DROP TABLE IF EXISTS matches")
+                
+                # Recreate tables
+                self.create_database()
+                
+                return True
+                
+            except Exception as e:
+                print(f"Error during purge: {e}")
+                return False
+                
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+
+        except Exception as e:
+            print(f"Error during backup before purge: {e}")
+            return False
+
+if __name__ == "__main__":
+    pass
+
+__all__ = ['Database']

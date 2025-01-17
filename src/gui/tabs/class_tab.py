@@ -18,7 +18,6 @@ class ClassTab(QWidget):
         
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            # Simplified SQL query
             cursor.execute("""
                 SELECT 
                     class,
@@ -37,14 +36,14 @@ class ClassTab(QWidget):
                     SUM(captures) as total_captures,
                     AVG(captures) as avg_captures,
                     AVG(rank) as avg_rank,
-                    SUM(CASE WHEN snapshot_name LIKE '%(VICTORY)%' THEN 1 ELSE 0 END) as victories,
-                    SUM(CASE WHEN snapshot_name LIKE '%(DEFEAT)%' THEN 1 ELSE 0 END) as defeats,
+                    SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) as victories,
+                    SUM(CASE WHEN outcome LIKE '%DEFEAT%' THEN 1 ELSE 0 END) as defeats,
                     CAST(
-                        SUM(CASE WHEN snapshot_name LIKE '%(VICTORY)%' THEN 1 ELSE 0 END) * 100.0 / 
+                        SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) * 100.0 / 
                         NULLIF(COUNT(*), 0) AS FLOAT
                     ) as win_rate
-                FROM snapshots
-                WHERE name = ? AND class != ''
+                FROM matches
+                WHERE player_name = ? AND class != ''
                 GROUP BY class
             """, (self.player_name,))
             

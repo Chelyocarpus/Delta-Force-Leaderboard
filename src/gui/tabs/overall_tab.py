@@ -1,18 +1,258 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QGroupBox, QGridLayout, 
-                           QLabel, QTableWidget, QTableWidgetItem)
-from PyQt5.QtCore import Qt
+                           QLabel, QToolTip)
+from PyQt5.QtCore import Qt, QMargins, QSettings  # Added QSettings import
+from PyQt5.QtChart import (QChart, QChartView, QBarSet, QBarSeries,
+                          QBarCategoryAxis, QValueAxis, QChart, QLegend)
+from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QFont, QFont, QCursor
 from ..widgets.numeric_sort import NumericSortItem
 from ...utils.constants import (HISTORY_TABLE_COLUMNS, QUERY_PLAYER_STATS,
                               QUERY_FAVORITE_CLASS, QUERY_VICTORY_STATS,
                               PLAYER_CLASSES)
 import sqlite3
+import logging
+
+# Setup logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
+
+QUERY_FAVORITE_CLASS = """
+    SELECT class
+    FROM matches
+    WHERE player_name = ?
+    GROUP BY class
+    ORDER BY COUNT(*) DESC
+    LIMIT 1
+"""
+
+class ResizableChartView(QChartView):
+    def __init__(self, chart, settings):
+        super().__init__(chart)
+        self.settings = settings
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Save height when resized
+        self.settings.setValue('chartGroupHeight', self.height())
+
+def create_monthly_performance_chart(cursor, player_name):
+    logger.info(f"Creating chart for player: {player_name}")
+    try:
+        cursor.execute("""
+            WITH month_data AS (
+                SELECT 
+                    substr(match_date, 4, 9) as month_year,  -- Extract "MMM YYYY" part
+                    kills, deaths, assists, revives
+                FROM matches 
+                WHERE player_name = ?
+            )
+            SELECT 
+                month_year,
+                ROUND(AVG(CAST(kills AS FLOAT)), 1) as avg_kills,
+                ROUND(AVG(CAST(deaths AS FLOAT)), 1) as avg_deaths,
+                ROUND(AVG(CAST(assists AS FLOAT)), 1) as avg_assists,
+                ROUND(AVG(CAST(revives AS FLOAT)), 1) as avg_revives,
+                COUNT(*) as games_played,
+                GROUP_CONCAT(month_year) as dates_included
+            FROM month_data
+            GROUP BY month_year
+            ORDER BY substr(month_year, -4) DESC, -- Year
+                     CASE substr(month_year, 1, 3) -- Month
+                        WHEN 'Jan' THEN '01'
+                        WHEN 'Feb' THEN '02'
+                        WHEN 'Mar' THEN '03'
+                        WHEN 'Apr' THEN '04'
+                        WHEN 'May' THEN '05'
+                        WHEN 'Jun' THEN '06'
+                        WHEN 'Jul' THEN '07'
+                        WHEN 'Aug' THEN '08'
+                        WHEN 'Sep' THEN '09'
+                        WHEN 'Oct' THEN '10'
+                        WHEN 'Nov' THEN '11'
+                        WHEN 'Dec' THEN '12'
+                     END DESC
+            LIMIT 3
+        """, (player_name,))
+
+        data = cursor.fetchall()
+        logger.debug(f"Raw data fetched: {data}")
+        
+        # Handle case where there's no data
+        if not data:
+            logger.warning("No data found for player")
+            chart = QChart()
+            chart.setTitle("No performance data available")
+            return QChartView(chart)
+        
+        try:
+            months, avg_kills, avg_deaths, avg_assists, avg_revives, games, dates = zip(*reversed(data))
+            logger.debug(f"\nProcessing monthly data:")
+            logger.debug(f"Months: {months}")
+            logger.debug(f"Games per month: {games}")
+            logger.debug(f"Sample dates included: {dates}")
+            
+            # Format month labels with games count (simpler now)
+            month_labels = [f"{m}\n({g} games)" for m, g in zip(months, games)]
+
+            # Round the averages to whole numbers
+            avg_kills = tuple(round(x) for x in avg_kills)
+            avg_deaths = tuple(round(x) for x in avg_deaths)
+            avg_assists = tuple(round(x) for x in avg_assists)
+            avg_revives = tuple(round(x) for x in avg_revives)
+
+            # Calculate actual max value from data
+            max_value = max(max(avg_kills), max(avg_deaths), max(avg_assists), max(avg_revives))
+
+            # Create and style bar sets with label colors
+            kills_set = QBarSet("Avg Kills")
+            deaths_set = QBarSet("Avg Deaths")
+            assists_set = QBarSet("Avg Assists")
+            revives_set = QBarSet("Avg Revives")
+
+            # Set label colors for each bar set
+            kills_set.setLabelColor(QColor("#000000"))
+            deaths_set.setLabelColor(QColor("#000000"))
+            assists_set.setLabelColor(QColor("#000000"))
+            revives_set.setLabelColor(QColor("#000000"))
+
+            # Add data to sets
+            kills_set.append(avg_kills)
+            deaths_set.append(avg_deaths)
+            assists_set.append(avg_assists)
+            revives_set.append(avg_revives)
+
+            # Create and configure series with tooltips
+            series = QBarSeries()
+            series.append(kills_set)
+            series.append(deaths_set)
+            series.append(assists_set)
+            series.append(revives_set)
+            series.setBarWidth(0.5)
+            series.setLabelsVisible(True)
+            series.setLabelsPosition(QBarSeries.LabelsOutsideEnd)
+            series.setLabelsFormat("@value")
+            
+            # Add hover effects and tooltips
+            def on_hover(status, index, barset):
+                if status:  # Mouse entered
+                    tooltip = f"{barset.label()}\nValue: {barset.at(index)}\nMonth: {month_labels[index]}"
+                    QToolTip.showText(QCursor.pos(), tooltip)
+                else:  # Mouse left
+                    QToolTip.hideText()
+
+            series.hovered.connect(on_hover)
+
+            # Create and style chart with compact title
+            chart = QChart()
+            chart.addSeries(series)
+            chart.setTitle("Monthly Performance Trends")
+            title_font = QFont("Arial", 10, QFont.Bold)
+            chart.setTitleFont(title_font)
+            chart.setAnimationOptions(QChart.SeriesAnimations)
+            
+            # Set chart theme and background with reduced margins
+            chart.setBackgroundVisible(False)
+            chart.setPlotAreaBackgroundVisible(True)
+            chart.setPlotAreaBackgroundBrush(QBrush(QColor("#f8f9fa")))
+            chart.setBackgroundRoundness(0)
+            chart.setMargins(QMargins(10, 5, 10, 0))
+            
+            # Create and style Y-axis with better readability
+            axis_y = QValueAxis()
+            axis_y.setTitleText("Average Count")
+            axis_y.setTitleFont(QFont("Arial", 10, QFont.Bold))
+            
+            # Calculate nice round numbers for ticks
+            max_value = int(max_value)  # Ensure integer
+            if max_value <= 10:
+                tick_interval = 2
+                max_tick = 10
+            elif max_value <= 20:
+                tick_interval = 4
+                max_tick = 20
+            elif max_value <= 50:
+                tick_interval = 10
+                max_tick = ((max_value + 9) // 10) * 10
+            else:
+                tick_interval = 20
+                max_tick = ((max_value + 19) // 20) * 20
+            
+            # Set Y-axis properties
+            axis_y.setRange(0, max_tick)
+            axis_y.setTickCount(max_tick // tick_interval + 1)
+            axis_y.setMinorTickCount(1)  # Add minor ticks for better readability
+            axis_y.setLabelFormat("%d")  # Whole numbers only
+            
+            # Style Y-axis
+            axis_y.setLabelsFont(QFont("Arial", 9, QFont.Bold))
+            axis_y.setLabelsColor(QColor("#000000"))
+            axis_y.setGridLineColor(QColor("#e0e0e0"))
+            axis_y.setMinorGridLineVisible(False)  # Hide minor grid lines
+            axis_y.setGridLineVisible(True)
+            
+            # Add some padding to ensure labels are visible
+            chart.setMargins(QMargins(20, 10, 10, 10)) 
+            
+            chart.addAxis(axis_y, Qt.AlignLeft)
+            series.attachAxis(axis_y)
+
+            # Create and style X-axis
+            axis_x = QBarCategoryAxis()
+            axis_x.append(month_labels)
+            axis_x.setLabelsFont(QFont("Arial", 9))
+            axis_x.setGridLineVisible(False)
+            chart.addAxis(axis_x, Qt.AlignBottom)
+            series.attachAxis(axis_x)
+
+            # Configure legend with reduced spacing
+            chart.legend().setVisible(True)
+            chart.legend().setAlignment(Qt.AlignBottom)
+            chart.legend().setFont(QFont("Arial", 9))
+            chart.legend().setMarkerShape(QLegend.MarkerShapeRectangle)
+            chart.legend().setContentsMargins(0, 0, 0, 0)  # Minimize legend margins
+            
+            # Create chart view with adjusted height and resize handling
+            settings = QSettings('DeltaForce', 'Leaderboard')
+            chart_view = ResizableChartView(chart, settings)
+            chart_view.setRenderHint(QPainter.Antialiasing)
+            
+            # Restore saved height or use default
+            saved_height = settings.value('chartGroupHeight', 50)
+            chart_view.setFixedHeight(int(saved_height))
+            
+            return chart_view
+            
+        except Exception as e:
+            logger.error(f"Error creating chart components: {str(e)}", exc_info=True)
+            raise
+            
+    except Exception as e:
+        logger.error(f"Error in chart creation: {str(e)}", exc_info=True)
+        chart = QChart()
+        chart.setTitle("Error creating chart")
+        return QChartView(chart)
 
 def setup_overall_tab(dialog):
+    settings = QSettings('DeltaForce', 'Leaderboard')
     layout = QVBoxLayout()
     
-    # Add the chart first
-    dialog.setup_stats_chart(layout)
-    
+    # Create monthly performance chart
+    with sqlite3.connect(dialog.parent.db.db_path) as conn:
+        cursor = conn.cursor()
+        performance_chart = create_monthly_performance_chart(cursor, dialog.player_name)
+        
+        # Add chart to layout in a group box with adjusted height
+        chart_group = QGroupBox("Monthly Performance")
+        chart_layout = QVBoxLayout()
+        chart_layout.setContentsMargins(5, 5, 5, 5)
+        
+        # Restore saved chart height or use default
+        saved_height = settings.value('chartGroupHeight', 250)
+        performance_chart.setFixedHeight(int(saved_height))
+        
+        chart_layout.addWidget(performance_chart)
+        chart_group.setLayout(chart_layout)
+        layout.addWidget(chart_group)
+
     summary_group = QGroupBox("Overall Statistics")
     summary_layout = QGridLayout()
     
@@ -29,9 +269,9 @@ def setup_overall_tab(dialog):
                 class,
                 COUNT(*) as count,
                 ROUND(CAST(COUNT(*) AS FLOAT) * 100 / 
-                    (SELECT COUNT(*) FROM snapshots WHERE name = ?), 1) as percentage
-            FROM snapshots
-            WHERE name = ?
+                    (SELECT COUNT(*) FROM matches WHERE player_name = ?), 1) as percentage
+            FROM matches
+            WHERE player_name = ?
             GROUP BY class
         """, (dialog.player_name, dialog.player_name))
         raw_class_stats = {cls: (count, pct) for cls, count, pct in cursor.fetchall()}
@@ -39,7 +279,7 @@ def setup_overall_tab(dialog):
         # Create full class stats including zeros for missing classes
         class_stats = []
         for class_name in PLAYER_CLASSES:
-            if class_name in raw_class_stats:
+            if (class_name in raw_class_stats):
                 count, pct = raw_class_stats[class_name]
                 class_stats.append((class_name, count, pct))
             else:
@@ -108,57 +348,5 @@ def setup_overall_tab(dialog):
 
     summary_group.setLayout(summary_layout)
     layout.addWidget(summary_group)
-
-    # Add history table
-    history_group = QGroupBox("Match History")
-    history_layout = QVBoxLayout()
-    
-    dialog.history_table = QTableWidget()
-    dialog.history_table.setColumnCount(10)
-    dialog.history_table.setHorizontalHeaderLabels(HISTORY_TABLE_COLUMNS)
-    dialog.history_table.setSortingEnabled(True)
-    
-    cursor.execute("""
-        SELECT 
-            timestamp,
-            snapshot_name,
-            rank,
-            class,
-            score,
-            kills,
-            deaths,
-            assists,
-            revives,
-            captures
-        FROM snapshots
-        WHERE name = ?
-        ORDER BY timestamp DESC
-    """, (dialog.player_name,))
-    
-    history = cursor.fetchall()
-    dialog.history_table.setRowCount(len(history))
-    
-    for row, data in enumerate(history):
-        for col, value in enumerate(data):
-            if col in [0, 1, 3]:  # Date, Snapshot, and Class columns
-                item = QTableWidgetItem(str(value))
-            else:
-                item = NumericSortItem(value)
-            item.setTextAlignment(Qt.AlignCenter)
-            dialog.history_table.setItem(row, col, item)
-    
-    dialog.history_table.resizeColumnsToContents()
-    history_layout.addWidget(dialog.history_table)
-    history_group.setLayout(history_layout)
-    layout.addWidget(history_group)
-    
-    dialog.history_table.horizontalHeader().setSortIndicator(0, Qt.DescendingOrder)
-    # Add tooltips to column headers
-    for col, tooltip in enumerate([
-        "Match Date", "Match Details", "Player Rank", "Class Used",
-        "Total Score", "Total Kills", "Total Deaths", 
-        "Total Assists", "Total Revives", "Total Captures"
-    ]):
-        dialog.history_table.horizontalHeaderItem(col).setToolTip(tooltip)
     
     dialog.overall_tab.setLayout(layout)

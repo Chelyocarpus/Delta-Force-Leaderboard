@@ -14,13 +14,15 @@ from src.gui.dialogs.player_details import PlayerDetailsDialog
 from src.gui.widgets.numeric_sort import NumericSortItem
 
 from src.utils.constants import RESOURCES_DIR
-from src.gui.dialogs.import_on_startup import ImportOnStartupDialog
 from src.utils.constants import IMPORT_DIR
 import glob
+from src.gui.dialogs.import_on_startup import ImportManager, ImportStartupDialog
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        # Add this near the start of __init__
+        self.current_snapshot = None
         self.setWindowTitle("Leaderboard")
         self.setGeometry(100, 100, 1000, 600)
         self.settings = QSettings('DeltaForce', 'Leaderboard')
@@ -42,11 +44,11 @@ class MainWindow(QMainWindow):
         # Create menu bar
         self.create_menu_bar()
         
-        # Create the main widget
-        widget = QWidget()
-        layout = QVBoxLayout()
-        widget.setLayout(layout)
-        self.setCentralWidget(widget)
+        # Create main widget and layout
+        self.central_widget = QWidget()
+        self.main_layout = QVBoxLayout()
+        self.central_widget.setLayout(self.main_layout)
+        self.setCentralWidget(self.central_widget)
 
         # Create search bar
         search_layout = QHBoxLayout()
@@ -54,46 +56,62 @@ class MainWindow(QMainWindow):
         self.search_input.setPlaceholderText("Search by name...")
         self.search_input.textChanged.connect(self.on_search)
         search_layout.addWidget(self.search_input)
-        layout.addLayout(search_layout)
+        self.main_layout.addLayout(search_layout)
 
-        # Create the table widget
+        # Create table
+        self.setup_table()
+        
+        # Load initial data
+        self.load_data_from_db()
+        
+        # Setup other components
+
+        self.setup_auto_backup()
+        self.setup_import_manager()
+        
+        # Add this line at the end of __init__
+        QTimer.singleShot(0, self.check_new_files_on_startup)
+
+    def setup_auto_backup(self):
+        """Setup automatic backup timer"""
+        self.backup_timer = QTimer(self)
+        self.backup_timer.timeout.connect(self.auto_backup)
+        self.backup_timer.start(3600000)  # Backup every hour
+
+    def setup_import_manager(self):
+        """Setup import manager and run initial check"""
+        self.import_manager = ImportManager()
+
+    def setup_table(self):
         self.table = QTableWidget()
-        self.table.setColumnCount(7)  # Removed rank and class columns
+        self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels([
             "Name", "Score", "Kills", "Deaths", 
             "Assists", "Revives", "Captures"
         ])
-        self.table.setSortingEnabled(True)  # Enable sorting
+        self.table.setSortingEnabled(True)
 
-        # Set column stretch behavior
+        # Set column properties with stretch mode
         header = self.table.horizontalHeader()
         for i in range(self.table.columnCount()):
-                header.setSectionResizeMode(i, QHeaderView.Stretch)
+            header.setSectionResizeMode(i, QHeaderView.Stretch)
 
-        # Load data from database
-        self.load_data_from_db()
-
-        # Adjust column widths and other properties
-        self.table.horizontalHeader().setStretchLastSection(True)
+        # Set table properties
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SingleSelection)
         self.table.setContextMenuPolicy(Qt.DefaultContextMenu)
         self.table.contextMenuEvent = self.tableContextMenuEvent
-        self.table.installEventFilter(self)  # Install event filter
-        layout.addWidget(self.table)
-        self.current_snapshot = None  # Track current snapshot
-        self.column_widths = []  # Add this to store column widths
-        self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
-        self.NumericSortItem = NumericSortItem  # Make NumericSortItem available to dialogs
-
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)  # Select entire rows
-        self.table.setSelectionMode(QTableWidget.SingleSelection)  # Allow only single row selection
         self.table.itemClicked.connect(self.on_item_clicked)
+        self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
 
-        # Setup auto-backup
-        self.backup_timer = QTimer(self)
-        self.backup_timer.timeout.connect(self.auto_backup)
-        self.backup_timer.start(3600000)  # Backup every hour
+        self.main_layout.addWidget(self.table)
+
+    def resizeEvent(self, event):
+        """Handle window resize events"""
+        super().resizeEvent(event)
+        # No need to update columns as they stretch automatically
 
     def closeEvent(self, event):
         self.save_window_state()
@@ -171,27 +189,26 @@ class MainWindow(QMainWindow):
                 self.table.setColumnWidth(i, width)
 
     def load_data_from_db(self):
-        self.table.setSortingEnabled(False)  # Temporarily disable sorting
-        self.save_column_widths()  # Save widths before refresh
-        self.table.setRowCount(0)  # Clear existing rows
+        self.table.setSortingEnabled(False)
+        self.save_column_widths()
+        self.table.setRowCount(0)
         
         search_text = self.search_input.text().lower()
         
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            # Modified query to aggregate data across snapshots
             cursor.execute("""
                 SELECT 
-                    name,
+                    player_name,
                     SUM(score) as total_score,
                     SUM(kills) as total_kills,
                     SUM(deaths) as total_deaths,
                     SUM(assists) as total_assists,
                     SUM(revives) as total_revives,
                     SUM(captures) as total_captures
-                FROM snapshots
-                GROUP BY name
-                HAVING LOWER(name) LIKE ?
+                FROM matches
+                GROUP BY player_name
+                HAVING LOWER(player_name) LIKE ?
                 ORDER BY total_score DESC
             """, (f'%{search_text}%',))
             data = cursor.fetchall()
@@ -240,13 +257,13 @@ class MainWindow(QMainWindow):
         data_hash = sorted(data_hash)  # Sort to ensure consistent comparison
         
         # Check existing snapshots
-        cursor.execute("SELECT DISTINCT snapshot_name FROM snapshots")
+        cursor.execute("SELECT DISTINCT snapshot_name FROM matches")
         snapshots = cursor.fetchall()
         
         for snapshot in snapshots:
             cursor.execute("""
-                SELECT rank, class, name, score, kills, deaths, assists, revives, captures 
-                FROM snapshots 
+                SELECT rank, class, player_name, score, kills, deaths, assists, revives, captures 
+                FROM matches 
                 WHERE snapshot_name = ?
             """, (snapshot[0],))
             existing_data = cursor.fetchall()
@@ -282,25 +299,23 @@ class MainWindow(QMainWindow):
                         
                     # Get metadata from first row
                     first_row = rows[0]
-                    snapshot_name = f"{first_row[2]} - {first_row[1]} ({first_row[0]})"
-                    timestamp = first_row[2]  # Data column contains timestamp
+                    match_id = f"{first_row[0]} - {first_row[1]} - {first_row[2]} - {first_row[3]}"
                     
                     # Check for duplicate data
-                    is_duplicate, existing_snapshot = self.db.check_duplicate_data(rows)
+                    is_duplicate, existing_match = self.db.check_duplicate_data(rows)
                     
                     if is_duplicate:
                         skipped_count += 1
                         self.statusBar().showMessage(
-                            f"Skipped duplicate data (matches snapshot: {existing_snapshot})", 
+                            f"Skipped duplicate data (matches: {existing_match})", 
                             3000
                         )
                         continue
                     
-                    # Import the snapshot if not duplicate
-                    self.db.import_snapshot(snapshot_name, timestamp, rows)
-                    imported_count += 1
-                    self.current_snapshot = snapshot_name
-                    self.statusBar().showMessage(f"Imported: {snapshot_name}", 3000)
+                    # Import the data
+                    if self.db.import_csv(file_name):
+                        imported_count += 1
+                        self.statusBar().showMessage(f"Imported: {match_id}", 3000)
 
                 except Exception as e:
                     QMessageBox.critical(self, "Error", 
@@ -338,9 +353,7 @@ class MainWindow(QMainWindow):
 
     def on_snapshot_deleted(self, snapshot_name):
         """Handle snapshot deletion updates"""
-        if snapshot_name == self.current_snapshot:
-            self.load_data_from_db()  # Refresh main window if current snapshot was deleted
-            self.current_snapshot = None
+        self.load_data_from_db()  # Always refresh the main window when a snapshot is deleted
 
     def on_row_double_clicked(self, row, column):
         player_name = self.table.item(row, 0).text()
@@ -407,7 +420,7 @@ class MainWindow(QMainWindow):
                 print(f"Error checking file {file_path}: {e}")
 
         if new_files:
-            dialog = ImportOnStartupDialog(
+            dialog = ImportStartupDialog(
                 [os.path.basename(f) for f in new_files], 
                 self
             )
@@ -423,20 +436,40 @@ class MainWindow(QMainWindow):
                             
                             if rows:
                                 first_row = rows[0]
-                                snapshot_name = f"{first_row[2]} - {first_row[1]} ({first_row[0]})"
+                                # Update automatic import to use same format
+                                snapshot_name = f"{first_row[0]} - {first_row[1]} - {first_row[2]} - {first_row[3]}"
                                 timestamp = first_row[2]
                                 
                                 self.db.import_snapshot(snapshot_name, timestamp, rows)
-                                self.statusBar().showMessage(f"Imported: {filename}", 3000)
+                                self.statusBar().showMessage(f"Imported: {snapshot_name}", 3000)
                     except Exception as e:
                         QMessageBox.critical(self, "Error", 
                             f"Failed to import {filename}: {str(e)}")
 
                 self.load_data_from_db()
 
+    def check_new_files_on_startup(self):
+        new_files = self.import_manager.check_new_files()
+        if new_files:
+            dialog = ImportStartupDialog([f[0] for f in new_files], self)
+            if dialog.exec_() == QDialog.Accepted:
+                selected_files = dialog.get_selected_files()
+                for filename in selected_files:
+                    # Find matching filepath from new_files tuple
+                    matching_file = next((f[1] for f in new_files if f[0] == filename), None)
+                    if matching_file:
+                        try:
+                            self.import_manager.import_file(matching_file)
+                            self.statusBar().showMessage(f"Imported: {filename}", 3000)
+                        except Exception as e:
+                            QMessageBox.critical(self, "Error", 
+                                f"Failed to import {filename}: {str(e)}")
+                
+                # Refresh the table after importing
+                self.load_data_from_db()
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
-    window.check_for_new_files()  # Add this line before showing the window
     window.show()
     sys.exit(app.exec_())

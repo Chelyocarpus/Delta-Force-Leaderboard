@@ -56,7 +56,7 @@ MEDAL_COLUMN_MAP = {
     'logistics_medal': 15,
     'intelligence_medal': 16
 }
-MEDAL_USERS = ["Adwdaa"]  # Only track medals for Adwdaa
+MEDAL_USERS = ["Adwdaa"]  # Only track medals for these players
 
 # Player classes
 PLAYER_CLASSES = ["Assault", "Engineer", "Support", "Recon"]
@@ -64,8 +64,8 @@ PLAYER_CLASSES = ["Assault", "Engineer", "Support", "Recon"]
 # SQL Queries
 QUERY_FAVORITE_CLASS = """
     SELECT class, COUNT(*) as class_count
-    FROM snapshots
-    WHERE name = ?
+    FROM matches
+    WHERE player_name = ?
     GROUP BY class
     ORDER BY class_count DESC
     LIMIT 1
@@ -73,34 +73,30 @@ QUERY_FAVORITE_CLASS = """
 
 QUERY_VICTORY_STATS = """
     SELECT 
-        SUM(CASE WHEN snapshot_name LIKE '%(VICTORY)%' THEN 1 ELSE 0 END) as victories,
-        SUM(CASE WHEN snapshot_name LIKE '%(DEFEAT)%' THEN 1 ELSE 0 END) as defeats,
-        ROUND(CAST(SUM(CASE WHEN snapshot_name LIKE '%(VICTORY)%' THEN 1 ELSE 0 END) AS FLOAT) * 100 /
-            COUNT(*), 1) as win_rate
-    FROM snapshots
-    WHERE name = ?
+        SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) as victories,
+        SUM(CASE WHEN outcome LIKE '%DEFEAT%' THEN 1 ELSE 0 END) as defeats
+    FROM matches
+    WHERE player_name = ?
 """
 
 QUERY_PLAYER_STATS = """
     SELECT 
-        COUNT(DISTINCT snapshot_name) as num_games,
+        COUNT(*) as total_games,
         SUM(score) as total_score,
-        ROUND(AVG(score)) as avg_score,
+        ROUND(AVG(score), 1) as avg_score,
         MAX(score) as best_score,
         SUM(kills) as total_kills,
-        ROUND(AVG(kills)) as avg_kills,
+        ROUND(AVG(kills), 1) as avg_kills,
         SUM(deaths) as total_deaths,
-        ROUND(AVG(deaths)) as avg_deaths,
-        ROUND(CAST(SUM(kills) AS FLOAT) / 
-              CASE WHEN SUM(deaths) = 0 THEN 1 
-              ELSE SUM(deaths) END, 2) as kd_ratio,
+        ROUND(AVG(deaths), 1) as avg_deaths,
+        ROUND(CAST(SUM(kills) AS FLOAT) / NULLIF(SUM(deaths), 0), 2) as kd_ratio,
         SUM(assists) as total_assists,
-        ROUND(AVG(assists)) as avg_assists,
+        ROUND(AVG(assists), 1) as avg_assists,
         SUM(revives) as total_revives,
-        ROUND(AVG(revives)) as avg_revives,
+        ROUND(AVG(revives), 1) as avg_revives,
         SUM(captures) as total_captures,
-        ROUND(AVG(captures)) as avg_captures,
-        ROUND(AVG(rank)) as avg_rank
-    FROM snapshots
-    WHERE name = ?
+        ROUND(AVG(captures), 1) as avg_captures,
+        ROUND(AVG(rank), 1) as avg_rank
+    FROM matches
+    WHERE player_name = ?
 """

@@ -13,6 +13,11 @@ class Config:
         "Threshold-Attack and Defend": "Threshold - Attack and Defend",
         "hatted - Attack and Defend": "Shafted - Attack and Defend",
         "Ascension-Attac: and Defend": "Ascension - Attack and Defend",
+        "Cracked-Attac: and Defend": "Cracked - Attack and Defend",
+        "Shafted-Attac: and Defend": "Shafted - Attack and Defend",
+        "Trench ines - Attack and Defend": "Trench Lines - Attack and Defend",
+        "Trench ines-Attack and Defend": "Trench Lines - Attack and Defend",
+        "Cracked-Attack and Defend": "Cracked - Attack and Defend",
     }
     
     OUTCOME_CORRECTIONS = {
