@@ -25,13 +25,16 @@ class Config:
         "FAILIRE": "FAILURE",
         "FAILUPE": "FAILURE",
         "SUCCFSS": "SUCCESS",
+        "VILIORY": "VICTORY",
     }
     
     CLASS_MAP = {
         "+": "Support",
         "o": "Recon",
         "A": "Assault",
-        ".": "Engineer"
+        "-": "Support",
+        ".": "Engineer",
+        " ": "Engineer"
     }
     
     MEDAL_TYPES = [
@@ -42,9 +45,10 @@ class Config:
     ]
     
     CSV_HEADERS = [
-        "Outcome", "Map", "Data", "Team", "Rank", "Class", "Name", "Score", 
-        "Kills", "Deaths", "Assists", "Revives", "Captures",
-        "Combat Medal", "Capture Medal", "Logistics Medal", "Intelligence Medal"
+        "Outcome", "Map", "Data", "Team", "Rank", "Class", "Name", "Score",
+        "Kills", "Deaths", "Assists", "Revives", "Vehicle Damage", "Captures",
+        "Tactical Respawn", "Combat Medal", "Capture Medal", "Logistics Medal",
+        "Intelligence Medal"
     ]
     
     TEAM_NAME_CORRECTIONS = {
@@ -74,38 +78,62 @@ class DataProcessor:
             self.logger.error(f"Error reading file {filepath}: {e}")
         return None
 
-    def process_player_line(self, line: str) -> Optional[PlayerData]:
-        words = line.split()
-        if not words or not any(char.isalpha() for char in line):
-            return None
-
-        prefix = words[0]
-        if len(words) > 2 and words[1] in self.config.CLASS_MAP:
-            player_class = self.config.CLASS_MAP[words[1]]
-            name = " ".join(words[2:])
-        else:
-            player_class = "Engineer"
-            name = " ".join(words[1:])
-
-        name = name[2:] if name.startswith("- ") else name
-        return PlayerData(prefix, player_class, name, [])
-
     def process_scoreboard(self, lines: List[str]) -> List[PlayerData]:
-        players: List[PlayerData] = []
-        current_player: Optional[PlayerData] = None
-
-        for line in lines:
-            if any(char.isalpha() for char in line):
-                if current_player and len(current_player.stats) == 6:
-                    players.append(current_player)
-                current_player = self.process_player_line(line)
-            elif current_player:
-                numbers = [int(word) for word in line.split() if word.isdigit()]
-                current_player.stats.extend(numbers)
-
-        if current_player and len(current_player.stats) == 6:
-            players.append(current_player)
-
+        players = []
+        
+        for i in range(0, len(lines), 3):
+            if i + 2 >= len(lines):
+                break
+            
+            # First player info
+            p1_info = lines[i].split()
+            if not p1_info:
+                continue
+                
+            rank1 = p1_info[0]
+            status1 = '.' if len(p1_info) < 3 or p1_info[1] not in '+-oA' else p1_info[1]
+            name1 = p1_info[-1] if len(p1_info) < 3 else ' '.join(p1_info[2:])
+            
+            # Parse first player stats
+            stats1 = []
+            stats1_parts = lines[i+1].split()
+            for part in stats1_parts[:8]:
+                try:
+                    stats1.append(int(part))
+                except ValueError:
+                    continue
+            
+            if stats1:  # Only add player if we have stats
+                players.append(PlayerData(
+                    prefix=rank1,
+                    player_class=self.config.CLASS_MAP[status1],
+                    name=name1,
+                    stats=stats1
+                ))
+            
+            # Second player info from same stats line
+            stats2_parts = lines[i+1].split()[8:]
+            if len(stats2_parts) >= 2:
+                rank2 = stats2_parts[0]
+                status2 = '.' if len(stats2_parts) <= 2 or stats2_parts[1] not in '+-oA' else stats2_parts[1]
+                name2 = stats2_parts[2] if len(stats2_parts) > 2 else stats2_parts[1]
+                
+                # Parse second player stats
+                stats2 = []
+                for part in lines[i+2].split():
+                    try:
+                        stats2.append(int(part))
+                    except ValueError:
+                        continue
+                
+                if stats2:  # Only add player if we have stats
+                    players.append(PlayerData(
+                        prefix=rank2,
+                        player_class=self.config.CLASS_MAP[status2],
+                        name=name2,
+                        stats=stats2
+                    ))
+        
         return players
 
 class MedalProcessor:
@@ -179,6 +207,8 @@ class MatchProcessor:
         outcome = self.config.OUTCOME_CORRECTIONS.get(outcome, outcome)
         if outcome == "SUCCESS":
             outcome = "VICTORY"
+        # Remove any "?" characters from outcome
+        outcome = outcome.replace("?", "").strip()
         
         if "?" not in lines[1]:
             map_name = lines[1].strip()
@@ -221,10 +251,23 @@ class MatchProcessor:
         
         rows = []
         for player in players:
+            # Extract individual stats
+            score, kills, deaths, assists, revives, vehicle_damage, captures, tactical = (
+                player.stats[0],  # Score
+                player.stats[1],  # Kills
+                player.stats[2],  # Deaths
+                player.stats[3],  # Assists
+                player.stats[4],  # Revives
+                player.stats[5],  # Vehicle Damage
+                player.stats[6],  # Captures
+                player.stats[7]   # Tactical Respawn
+            ) if len(player.stats) >= 8 else (0, 0, 0, 0, 0, 0, 0, 0)
+            
             row = [
                 outcome, map_name, date, team_name,
-                player.prefix, player.player_class, player.name,
-                *player.stats
+                player.prefix, player.player_class, player.name, score,
+                kills, deaths, assists, revives, vehicle_damage, captures,
+                tactical
             ]
             
             # Add medal information

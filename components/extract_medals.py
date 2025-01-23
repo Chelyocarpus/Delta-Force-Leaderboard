@@ -45,21 +45,21 @@ def process_images_in_folder(folder_path, pixel_checks, medals):
 if __name__ == "__main__":
     pixel_checks = [
         # Combat Medal
-        ((130, 377), (230, 230, 230)), # Bronze Medal
-        ((200, 377), (230, 230, 230)), # Silver Medal
-        ((270, 377), (230, 230, 230)), # Gold Medal
+        ((130, 358), (230, 230, 230)), # Bronze Medal
+        ((200, 358), (230, 230, 230)), # Silver Medal
+        ((270, 358), (230, 230, 230)), # Gold Medal
         # Capture Medal
-        ((130, 580), (230, 230, 230)), # Bronze Medal
-        ((200, 580), (230, 230, 230)), # Silver Medal
-        ((270, 580), (230, 230, 230)), # Gold Medal
+        ((130, 560), (230, 230, 230)), # Bronze Medal
+        ((200, 560), (230, 230, 230)), # Silver Medal
+        ((270, 560), (230, 230, 230)), # Gold Medal
         # Logistics Medal
-        ((130, 783), (230, 230, 230)), # Bronze Medal
-        ((200, 783), (230, 230, 230)), # Silver Medal
-        ((270, 783), (230, 230, 230)), # Gold Medal
+        ((130, 764), (230, 230, 230)), # Bronze Medal
+        ((200, 764), (230, 230, 230)), # Silver Medal
+        ((270, 764), (230, 230, 230)), # Gold Medal
         # Intelligence Medal
-        ((130, 986), (230, 230, 230)), # Bronze Medal
-        ((200, 986), (230, 230, 230)), # Silver Medal
-        ((270, 986), (230, 230, 230)), # Gold Medal
+        ((130, 967), (230, 230, 230)), # Bronze Medal
+        ((200, 967), (230, 230, 230)), # Silver Medal
+        ((270, 967), (230, 230, 230)), # Gold Medal
     ]
     medals = [
         "Combat Bronze Medal", "Combat Silver Medal", "Combat Gold Medal",

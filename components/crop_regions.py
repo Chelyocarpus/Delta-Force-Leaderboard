@@ -26,8 +26,8 @@ output_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workfl
 
 # Define regions with their coordinates
 regions = {
-    'scoreboard': (337, 177, 1886, 1042), # top-left, bottom-right
-    'general_information': (700, 27, 1221, 85)  # top-left, bottom-right
+    'scoreboard': (335, 156, 1887, 1000), # top-left, bottom-right
+    'general_information': (683, 46, 1235, 110)  # top-left, bottom-right
 }
 
 # Process all image files
