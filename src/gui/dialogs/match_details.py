@@ -79,7 +79,7 @@ class MatchDetailsDialog(QDialog):
             with self.parent.parent.db.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    SELECT player_name, class, rank, score, kills, deaths,
+                    SELECT name, class, rank, score, kills, deaths,
                            CAST(ROUND(CAST(kills AS FLOAT) / 
                                 CASE WHEN deaths = 0 THEN 1 ELSE deaths END, 2) AS TEXT) as kd_ratio,
                            assists, revives, captures,

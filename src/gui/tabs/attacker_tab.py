@@ -89,6 +89,8 @@ class AttackerTab(QWidget):
                 ("Total Deaths", "deaths_total"),
                 ("Average Deaths", "deaths_avg"),
                 ("K/D Ratio", "kd_ratio"),
+                ("Total Vehicle Damage", "vehicle_damage_total"),    # Added
+                ("Average Vehicle Damage", "vehicle_damage_avg"),    # Added
             ],
             "Match Stats": [
                 ("Total Games", "games_total"),
@@ -106,6 +108,8 @@ class AttackerTab(QWidget):
                 ("Average Assists", "assists_avg"),
                 ("Total Revives", "revives_total"),
                 ("Average Revives", "revives_avg"),
+                ("Total Tactical Respawns", "tactical_respawn_total"),    # Added
+                ("Average Tactical Respawns", "tactical_respawn_avg"),    # Added
             ],
             "Objective Performance": [
                 ("Total Captures", "captures_total"),
@@ -120,9 +124,8 @@ class AttackerTab(QWidget):
             ]
         }
 
-        row = 0
-        col = 0
-        for group_name, stats in groups.items():
+        # Create group boxes with 3-column layout
+        for idx, (group_name, stats) in enumerate(groups.items()):
             group = QGroupBox(group_name)
             group_layout = QGridLayout()
             group_layout.setSpacing(2)
@@ -141,12 +144,11 @@ class AttackerTab(QWidget):
                 group_layout.addWidget(value_label, i, 1)
 
             group.setLayout(group_layout)
-            stats_layout.addWidget(group, row, col)
             
-            col += 1
-            if col > 1:
-                col = 0
-                row += 1
+            # Arrange groups in a 2x3 grid
+            row = idx // 3
+            col = idx % 3
+            stats_layout.addWidget(group, row, col)
 
         parent_layout.addLayout(stats_layout)
 
@@ -156,7 +158,7 @@ class AttackerTab(QWidget):
             cursor.execute("""
                 SELECT DISTINCT map 
                 FROM matches 
-                WHERE player_name = ? 
+                WHERE name = ? 
                 ORDER BY map
             """, (self.player_name,))
             maps = [row[0] for row in cursor.fetchall()]
@@ -174,7 +176,7 @@ class AttackerTab(QWidget):
             cursor.execute(f"""
                 WITH attacker_stats AS (
                     SELECT * FROM matches 
-                    WHERE player_name = ? 
+                    WHERE name = ? 
                      AND LOWER(team) = LOWER('Attack')
                     {map_filter}
                 )
@@ -186,6 +188,8 @@ class AttackerTab(QWidget):
                     SUM(deaths) as deaths_total,
                     ROUND(AVG(CAST(deaths AS FLOAT)), 1) as deaths_avg,
                     ROUND(CAST(SUM(kills) AS FLOAT) / NULLIF(SUM(deaths), 0), 2) as kd_ratio,
+                    SUM(COALESCE(vehicle_damage, 0)) as vehicle_damage_total,
+                    ROUND(AVG(COALESCE(vehicle_damage, 0)), 1) as vehicle_damage_avg,
                     
                     -- Match Stats
                     COUNT(*) as games_total,
@@ -203,6 +207,8 @@ class AttackerTab(QWidget):
                     ROUND(AVG(CAST(assists AS FLOAT)), 1) as assists_avg,
                     SUM(revives) as revives_total,
                     ROUND(AVG(CAST(revives AS FLOAT)), 1) as revives_avg,
+                    SUM(COALESCE(tactical_respawn, 0)) as tactical_respawn_total,
+                    ROUND(AVG(COALESCE(tactical_respawn, 0)), 1) as tactical_respawn_avg,
                     
                     -- Objective Performance
                     SUM(captures) as captures_total,

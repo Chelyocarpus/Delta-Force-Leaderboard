@@ -110,18 +110,39 @@ class SnapshotViewerDialog(QDialog):
         with self.parent.db.get_connection() as conn:
             cursor = conn.cursor()
             
-            # Load dates
-            cursor.execute("SELECT DISTINCT match_date FROM matches ORDER BY match_date DESC")
+            # Check if table has data first
+            cursor.execute("SELECT COUNT(*) FROM matches")
+            if cursor.fetchone()[0] == 0:
+                return  # Don't load filters if there's no data
+            
+            # Try to detect the correct column name
+            cursor.execute("PRAGMA table_info(matches)")
+            columns = [col[1] for col in cursor.fetchall()]
+            
+            date_column = 'data'
+            
+            # Use the correct column name
+            cursor.execute(f"SELECT DISTINCT {date_column} FROM matches ORDER BY {date_column} DESC")
             dates = cursor.fetchall()
-            self.date_filter.addItems([row[0] for row in dates])
+            if dates:  # Only add items if there are dates
+                self.date_filter.addItems([row[0] for row in dates])
             
             # Load maps
             cursor.execute("SELECT DISTINCT map FROM matches ORDER BY map")
             maps = cursor.fetchall()
-            self.map_filter.addItems([row[0] for row in maps])
+            if maps:  # Only add items if there are maps
+                self.map_filter.addItems([row[0] for row in maps])
 
     def refresh_snapshots(self):
-        self.table.setRowCount(0)
+        self.table.setRowCount(0)  # Clear table first
+        
+        # Check if table has data
+        with self.parent.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM matches")
+            if cursor.fetchone()[0] == 0:
+                return  # Don't try to load data if table is empty
+        
         search_text = self.search_input.text().lower()
         map_filter = self.map_filter.currentText()
         outcome_filter = self.outcome_filter.currentText()
@@ -130,30 +151,35 @@ class SnapshotViewerDialog(QDialog):
         with self.parent.db.get_connection() as conn:
             cursor = conn.cursor()
             
-            query = """
+            # First detect the date column
+            cursor.execute("PRAGMA table_info(matches)")
+            columns = [col[1] for col in cursor.fetchall()]
+            date_column = 'data'
+            
+            query = f"""
                 SELECT 
-                    match_date,
+                    {date_column},
                     map,
                     outcome,
                     team,
-                    COUNT(DISTINCT player_name) as player_count,
-                    SUM(score) as total_score,
-                    (SELECT player_name FROM matches m2 
-                     WHERE m2.match_date = m1.match_date 
+                    COUNT(DISTINCT name) as player_count,
+                    SUM(CAST(score as INTEGER)) as total_score,
+                    (SELECT name FROM matches m2 
+                     WHERE m2.{date_column} = m1.{date_column} 
                      AND m2.map = m1.map 
                      AND m2.team = m1.team 
-                     ORDER BY score DESC LIMIT 1) as top_player,
-                    MAX(score) as top_score,
-                    outcome || ' - ' || map || ' - ' || match_date || ' - ' || team as snapshot_name
+                     ORDER BY CAST(score as INTEGER) DESC LIMIT 1) as top_player,
+                    MAX(CAST(score as INTEGER)) as top_score,
+                    outcome || ' - ' || map || ' - ' || {date_column} || ' - ' || team as snapshot_name
                 FROM matches m1
                 WHERE (LOWER(map) LIKE ? OR LOWER(outcome) LIKE ?)
                     AND (? = 'All Maps' OR map = ?)
                     AND (? = 'All Outcomes' OR 
                          (? = 'Victory' AND outcome LIKE '%VICTORY%') OR 
                          (? = 'Defeat' AND outcome LIKE '%DEFEAT%'))
-                    AND (? = 'All Dates' OR match_date = ?)
-                GROUP BY match_date, map, outcome, team
-                ORDER BY match_date DESC, map ASC
+                    AND (? = 'All Dates' OR {date_column} = ?)
+                GROUP BY {date_column}, map, outcome, team
+                ORDER BY {date_column} DESC, map ASC
             """
             
             cursor.execute(query, (
@@ -167,15 +193,23 @@ class SnapshotViewerDialog(QDialog):
                 self.table.insertRow(row_idx)
                 date, map_name, outcome, team, player_count, total_score, top_player, top_score, match_id = row_data
                 
+                # Format scores safely
+                try:
+                    formatted_total = f"{int(total_score):,}" if total_score else "0"
+                    formatted_top = f"{int(top_score):,}" if top_score else "0"
+                except (ValueError, TypeError):
+                    formatted_total = str(total_score)
+                    formatted_top = str(top_score)
+                
                 items = [
                     (date, Qt.AlignCenter),
                     (map_name, Qt.AlignLeft),
                     (outcome, Qt.AlignCenter),
                     (team, Qt.AlignCenter),
                     (str(player_count), Qt.AlignCenter),
-                    (f"{total_score:,}", Qt.AlignRight),
-                    (top_player, Qt.AlignLeft),
-                    (f"{top_score:,}", Qt.AlignRight)
+                    (formatted_total, Qt.AlignRight),
+                    (top_player or "Unknown", Qt.AlignLeft),
+                    (formatted_top, Qt.AlignRight)
                 ]
                 
                 for col, (value, alignment) in enumerate(items):

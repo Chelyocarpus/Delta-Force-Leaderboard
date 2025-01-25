@@ -1,6 +1,6 @@
 from ..utils.constants import (
-    MEDAL_CATEGORIES, MEDAL_RANKS, MEDAL_COLUMN_MAP,
-    MEDAL_USERS
+    MEDAL_CATEGORIES, MEDAL_RANKS,
+    USER
 )
 
 class MedalProcessor:
@@ -21,7 +21,7 @@ class MedalProcessor:
             return None
             
         name = row[6]  # Name column
-        if name not in MEDAL_USERS:  # Only process medals for Adwdaa
+        if name not in USER:  # Only process medals for Adwdaa
             return None
             
         medals = []
@@ -53,7 +53,7 @@ class MedalProcessor:
             
         medals = []
         for row in rows:
-            if row[5] not in MEDAL_USERS:
+            if row[5] not in USER:
                 continue
                 
             # Use list comprehension for better performance
@@ -66,7 +66,7 @@ class MedalProcessor:
 
     def get_player_medal_stats(self, player_name, db_conn):
         """Get comprehensive medal statistics for a player"""
-        if player_name not in MEDAL_USERS:  # Only return stats for Adwdaa
+        if player_name not in USER:  # Only return stats for Adwdaa
             return None
             
         cursor = db_conn.cursor()

@@ -14,7 +14,7 @@ class PlayerDetailsDialog(QDialog):
         super().__init__(parent)
         self.settings = QSettings('DeltaForce', 'Leaderboard')
         self.parent = parent
-        self.player_name = player_name
+        self.player_name = player_name  # Store the player name but use 'name' in queries
         self.overall_tab = QWidget()
         self.table = None  # Will be set by overall_tab
         self.db = parent.db  # Add reference to database
@@ -37,35 +37,37 @@ class PlayerDetailsDialog(QDialog):
 
     def init_ui(self):
         layout = QVBoxLayout()
-
         tabs = QTabWidget()
         
-        # Define base tab configurations
+        # Define base tab configurations with consistent argument format
         tab_configs = [
-            ("Overall Stats", setup_overall_tab, self),
+            ("Overall Stats", setup_overall_tab, self),  # Pass dialog directly
             ("Classes", ClassTab, [self, self.player_name, self.parent.db.db_path]),
-            ("Map Performance", MapTab, [self, self.player_name, self.parent.db.db_path]),
-            ("Attacker", AttackerTab, [self, self.player_name, self.parent.db.db_path]),
-            ("Defender", DefenderTab, [self, self.player_name, self.parent.db.db_path]),
-            ("Match History", MatchHistoryTab, [self, self.player_name, self.parent.db.db_path]),
+            ("Map Performance", MapTab, [self, self.player_name, self.parent.db.db_path])  # Fixed map tab args
         ]
 
-        # Add medals tab only for Adwdaa
-        from src.utils.constants import MEDAL_USERS
-        if self.player_name in MEDAL_USERS:
-            tab_configs.append(
+        # Add special tabs for specific users
+        from src.utils.constants import USER
+        if self.player_name in USER:
+            tab_configs.extend([
+                ("Attacker", AttackerTab, [self, self.player_name, self.parent.db.db_path]),
+                ("Defender", DefenderTab, [self, self.player_name, self.parent.db.db_path]),
                 ("Medals", MedalsTab, [self, self.player_name, self.parent.db.db_path])
-            )
+            ])
+        
+        # Add match history tab
+        tab_configs.append(
+            ("Match History", MatchHistoryTab, [self, self.player_name, self.parent.db.db_path])
+        )
 
         # Create and add tabs
         for tab_name, tab_class, args in tab_configs:
-            if callable(tab_class):
-                if isinstance(args, list):
-                    tab = tab_class(*args)
-                else:
-                    tab_class(args)  # For setup_overall_tab case
-                    tab = self.overall_tab
-                tabs.addTab(tab, tab_name)
+            if tab_name == "Overall Stats":
+                tab = tab_class(args)  # Special handling for setup_overall_tab
+            else:
+                tab = tab_class(*args)  # All other tabs use positional args
+            
+            tabs.addTab(tab, tab_name)
 
         layout.addWidget(tabs)
 

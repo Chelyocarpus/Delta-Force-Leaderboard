@@ -34,7 +34,8 @@ class Config:
         "A": "Assault",
         "-": "Support",
         ".": "Engineer",
-        " ": "Engineer"
+        " ": "Engineer",
+        "9": "Recon",
     }
     
     MEDAL_TYPES = [
@@ -80,60 +81,119 @@ class DataProcessor:
 
     def process_scoreboard(self, lines: List[str]) -> List[PlayerData]:
         players = []
-        
-        for i in range(0, len(lines), 3):
-            if i + 2 >= len(lines):
-                break
-            
-            # First player info
-            p1_info = lines[i].split()
-            if not p1_info:
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if not line or not line[0].isdigit():
+                i += 1
                 continue
-                
-            rank1 = p1_info[0]
-            status1 = '.' if len(p1_info) < 3 or p1_info[1] not in '+-oA' else p1_info[1]
-            name1 = p1_info[-1] if len(p1_info) < 3 else ' '.join(p1_info[2:])
-            
-            # Parse first player stats
-            stats1 = []
-            stats1_parts = lines[i+1].split()
-            for part in stats1_parts[:8]:
-                try:
-                    stats1.append(int(part))
-                except ValueError:
-                    continue
-            
-            if stats1:  # Only add player if we have stats
-                players.append(PlayerData(
-                    prefix=rank1,
-                    player_class=self.config.CLASS_MAP[status1],
-                    name=name1,
-                    stats=stats1
-                ))
-            
-            # Second player info from same stats line
-            stats2_parts = lines[i+1].split()[8:]
-            if len(stats2_parts) >= 2:
-                rank2 = stats2_parts[0]
-                status2 = '.' if len(stats2_parts) <= 2 or stats2_parts[1] not in '+-oA' else stats2_parts[1]
-                name2 = stats2_parts[2] if len(stats2_parts) > 2 else stats2_parts[1]
-                
-                # Parse second player stats
-                stats2 = []
-                for part in lines[i+2].split():
-                    try:
-                        stats2.append(int(part))
-                    except ValueError:
+
+            parts = line.split()
+            next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            next_parts = next_line.split()
+
+            try:
+                # Process player from current line
+                if next_line and next_parts and next_parts[0].replace(',', '').isdigit():
+                    rank = parts[0]
+                    name_parts = parts[1:]
+                    
+                    # Improved class and name parsing using CLASS_MAP
+                    if name_parts and name_parts[0] in self.config.CLASS_MAP:
+                        status = name_parts[0]
+                        name = ' '.join(name_parts[1:])
+                    else:
+                        status = '.'  # Default to Engineer
+                        name = ' '.join(name_parts)
+                    
+                    # Clean the name by removing any class markers and commas
+                    name_cleaned = []
+                    for part in name.split():
+                        if part not in self.config.CLASS_MAP and not (part == '.' and len(part) == 1):
+                            name_cleaned.append(part.replace(',', ''))  # Remove commas
+                    name = ' '.join(name_cleaned)
+                    
+                    # Get stats from next line
+                    stats = []
+                    for part in next_parts[:8]:
+                        try:
+                            stats.append(int(part.replace(',', '')))
+                        except ValueError:
+                            continue
+                    
+                    if len(stats) == 8:
+                        players.append(PlayerData(
+                            prefix=rank,
+                            player_class=self.config.CLASS_MAP[status],
+                            name=name,
+                            stats=stats
+                        ))
+                        
+                        # Process second player if exists
+                        if len(next_parts) > 8:
+                            second_player = next_parts[8:]
+                            if len(second_player) >= 2:
+                                rank2 = second_player[0]
+                                name_parts2 = second_player[1:]
+                                
+                                # Same improved class and name parsing for second player
+                                if name_parts2 and name_parts2[0] in self.config.CLASS_MAP:
+                                    status2 = name_parts2[0]
+                                    name2 = ' '.join(name_parts2[1:])
+                                else:
+                                    status2 = '.'
+                                    name2 = ' '.join(name_parts2)
+                                
+                                # Clean second player name and remove commas
+                                name2_cleaned = []
+                                for part in name2.split():
+                                    if part not in self.config.CLASS_MAP and not (part == '.' and len(part) == 1):
+                                        name2_cleaned.append(part.replace(',', ''))  # Remove commas
+                                name2 = ' '.join(name2_cleaned)
+                                
+                                # Get second player stats from next line
+                                if i + 2 < len(lines):
+                                    stats2 = []
+                                    for part in lines[i + 2].split()[:8]:
+                                        try:
+                                            stats2.append(int(part.replace(',', '')))
+                                        except ValueError:
+                                            continue
+                                    
+                                    if len(stats2) == 8:
+                                        players.append(PlayerData(
+                                            prefix=rank2,
+                                            player_class=self.config.CLASS_MAP[status2],
+                                            name=name2,
+                                            stats=stats2
+                                        ))
+                        i += 2 if len(next_parts) > 8 else 1
                         continue
-                
-                if stats2:  # Only add player if we have stats
-                    players.append(PlayerData(
-                        prefix=rank2,
-                        player_class=self.config.CLASS_MAP[status2],
-                        name=name2,
-                        stats=stats2
-                    ))
-        
+
+                # If that fails, try to process as single-line format
+                if len(parts) >= 10:  # Minimum length for single line with stats
+                    # Look for 8 consecutive numbers in the line
+                    for j in range(2, len(parts)-7):
+                        try:
+                            # Try to parse 8 consecutive numbers
+                            stats = [int(parts[k].replace(',', '')) for k in range(j, j+8)]
+                            name = ' '.join(parts[2:j])  # Everything before stats is name
+                            
+                            players.append(PlayerData(
+                                prefix=parts[0],
+                                player_class=self.config.CLASS_MAP[parts[1] if parts[1] in '+-oA' else '.'],
+                                name=name,
+                                stats=stats
+                            ))
+                            break
+                        except ValueError:
+                            continue
+
+            except Exception as e:
+                self.logger.warning(f"Error processing line {i}: {e}")
+            
+            i += 1
+
         return players
 
 class MedalProcessor:
@@ -200,42 +260,66 @@ class MatchProcessor:
         self.write_csv(output_file, scoreboard_data, outcome, map_name, date, team_name, medals_data)
 
     def process_general_info(self, lines: List[str]) -> Tuple[str, str, str]:
-        if len(lines) < 3:
+        if len(lines) < 2:
             return ("Unknown", "Unknown", "Unknown")
         
+        # Handle outcome
         outcome = lines[0].strip()
         outcome = self.config.OUTCOME_CORRECTIONS.get(outcome, outcome)
         if outcome == "SUCCESS":
             outcome = "VICTORY"
-        # Remove any "?" characters from outcome
         outcome = outcome.replace("?", "").strip()
         
-        if "?" not in lines[1]:
-            map_name = lines[1].strip()
-            date_parts = [line.strip() for line in lines[2:] if line.strip()]
-        else:
-            map_name = lines[2].strip()
-            date_parts = [line.strip() for line in lines[3:] if line.strip()]
+        # Handle map name and date
+        map_name = "Unknown"
+        date_str = "Unknown"
+        
+        # Skip any "?" lines and get remaining content
+        valid_lines = [line.strip() for line in lines[1:] if line.strip() and line.strip() != "?"]
+        
+        if valid_lines:
+            # First valid line after outcome is always map name
+            map_line = valid_lines[0]
+            
+            # Check if map name contains a date
+            words = map_line.split()
+            for i, part in enumerate(words):
+                # Look for month abbreviation with optional period
+                if part.rstrip('.').lower() in ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 
+                                              'jul', 'aug', 'sep', 'oct', 'nov', 'dec']:
+                    try:
+                        # Take everything before the date parts as map name
+                        map_name = ' '.join(words[:i-1])  # -1 to exclude the day number
+                        date_str = ' '.join(words[i-1:])  # Include from day number onwards
+                        break
+                    except:
+                        continue
+            
+            if date_str == "Unknown":
+                map_name = map_line
+                # Try to get date from next line if exists
+                if len(valid_lines) > 1:
+                    date_str = valid_lines[1]
         
         map_name = self.config.MAP_NAME_CORRECTIONS.get(map_name, map_name)
         
         # Format date string
-        date_str = " ".join(date_parts).replace(" - ", " ").replace("-", " ")
         try:
-            parts = date_str.split()
-            if len(parts) >= 2:
-                day = parts[0].zfill(2)
-                month = parts[1]
-                year = parts[2] if len(parts) > 2 else str(datetime.datetime.now().year)
-                time = parts[3] if len(parts) > 3 and self._is_valid_time(parts[3]) else "00:00:00"
-                data = f"{day} {month} {year} {time}"
-            else:
-                data = date_str
+            if date_str and date_str != "Unknown":
+                parts = date_str.split()
+                if len(parts) >= 3:  # At least day, month, year
+                    day = parts[0].zfill(2)
+                    month = parts[1].rstrip('.')  # Remove potential period
+                    year = parts[2]
+                    time = parts[3] if len(parts) > 3 else "00:00:00"
+                    if not self._is_valid_time(time):
+                        time = "00:00:00"
+                    date_str = f"{day} {month} {year} {time}"
         except Exception as e:
-            self.logger.warning(f"Could not format date: {date_str}")
-            data = date_str
-        
-        return outcome, map_name, data
+            self.logger.warning(f"Could not parse date: {date_str}")
+            date_str = "Unknown"
+            
+        return outcome, map_name, date_str
 
     def _is_valid_time(self, time_str: str) -> bool:
         try:

@@ -8,18 +8,10 @@ DATA_DIR = os.path.join(ROOT_DIR, 'data')
 # Import settings
 IMPORT_DIR = os.path.join(ROOT_DIR, 'components', 'workflow')
 
-# Database settings
-DB_NAME = 'leaderboard.db'
-DB_PATH = os.path.join(DATA_DIR, DB_NAME)
-
 # Window dimensions
 MAIN_WINDOW_SIZE = (1000, 600)
-DETAILS_WINDOW_SIZE = (900, 500)
-SNAPSHOT_WINDOW_SIZE = (1200, 600)
 
 # Application settings
-APP_NAME = 'DeltaForce'
-APP_MODULE = 'Leaderboard'
 APP_TITLE = 'Delta Force Leaderboard'
 
 # Table column headers
@@ -38,15 +30,6 @@ HISTORY_TABLE_COLUMNS = [
     "Date", "Snapshot", "Rank", "Class", "Score",
     "Kills", "Deaths", "Assists", "Revives", "Captures"
 ]
-
-MEDAL_TABLE_COLUMNS = [
-    "Date",
-    "Match",
-    "Medal Type",
-    "Description",
-    "Details"
-]
-
 # Medal settings
 MEDAL_CATEGORIES = ["Combat", "Capture", "Logistics", "Intelligence"]
 MEDAL_RANKS = ["Gold", "Silver", "Bronze"]  # Order by precedence
@@ -56,7 +39,7 @@ MEDAL_COLUMN_MAP = {
     'logistics_medal': 15,
     'intelligence_medal': 16
 }
-MEDAL_USERS = ["Adwdaa"]  # Only track medals for these players
+USER = ["Adwdaa"]  # Only track medals for these players
 
 # Player classes
 PLAYER_CLASSES = ["Assault", "Engineer", "Support", "Recon"]

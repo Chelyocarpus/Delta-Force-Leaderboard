@@ -2,6 +2,7 @@ from doctr.io import DocumentFile
 from doctr.models import ocr_predictor
 import os
 from pathlib import Path
+from tqdm import tqdm
 
 # Initialize the OCR predictor
 predictor = ocr_predictor(det_arch='fast_base', reco_arch='crnn_vgg16_bn', pretrained=True) #Fast_base is the best detector in my tests
@@ -14,7 +15,8 @@ predictor = ocr_predictor(det_arch='fast_base', reco_arch='crnn_vgg16_bn', pretr
 input_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workflow')
 
 # Process all images in the folder
-for image_path in Path(input_folder).glob('*.jpg'):  # Add more extensions if needed: '*.png', etc.
+image_files = list(Path(input_folder).glob('*.jpg'))  # Convert to list for tqdm
+for image_path in tqdm(image_files, desc="Processing images", unit="file"):
     # Load and process the image
     img = DocumentFile.from_images(str(image_path))
     result = predictor(img)
@@ -30,6 +32,6 @@ for image_path in Path(input_folder).glob('*.jpg'):  # Add more extensions if ne
         file.write(text_output)
 
     # Debug: Show the result
-    result.show()
+    #result.show()
     
     print(f"Processed: {image_path}")

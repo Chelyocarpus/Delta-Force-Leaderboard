@@ -89,6 +89,8 @@ class DefenderTab(QWidget):
                 ("Total Deaths", "deaths_total"),
                 ("Average Deaths", "deaths_avg"),
                 ("K/D Ratio", "kd_ratio"),  # Make sure this matches the SQL query column name
+                ("Total Vehicle Damage", "vehicle_damage_total"),    # Added
+                ("Average Vehicle Damage", "vehicle_damage_avg"),    # Added
             ],
             "Match Stats": [
                 ("Total Games", "games_total"),
@@ -106,6 +108,8 @@ class DefenderTab(QWidget):
                 ("Average Assists", "assists_avg"),
                 ("Total Revives", "revives_total"),
                 ("Average Revives", "revives_avg"),
+                ("Total Tactical Respawns", "tactical_respawn_total"),    # Added
+                ("Average Tactical Respawns", "tactical_respawn_avg"),    # Added
             ],
             "Objective Performance": [
                 ("Total Captures", "captures_total"),
@@ -114,9 +118,8 @@ class DefenderTab(QWidget):
             ]
         }
 
-        row = 0
-        col = 0
-        for group_name, stats in groups.items():
+        # Create group boxes with 3-column layout
+        for idx, (group_name, stats) in enumerate(groups.items()):
             group = QGroupBox(group_name)
             group_layout = QGridLayout()
             group_layout.setSpacing(2)
@@ -135,12 +138,11 @@ class DefenderTab(QWidget):
                 group_layout.addWidget(value_label, i, 1)
 
             group.setLayout(group_layout)
-            stats_layout.addWidget(group, row, col)
             
-            col += 1
-            if col > 1:
-                col = 0
-                row += 1
+            # Arrange groups in a 2x3 grid
+            row = idx // 3
+            col = idx % 3
+            stats_layout.addWidget(group, row, col)
 
         parent_layout.addLayout(stats_layout)
 
@@ -150,7 +152,7 @@ class DefenderTab(QWidget):
             cursor.execute("""
                 SELECT DISTINCT map 
                 FROM matches 
-                WHERE player_name = ? 
+                WHERE name = ? 
                 ORDER BY map
             """, (self.player_name,))
             maps = [row[0] for row in cursor.fetchall()]
@@ -172,7 +174,7 @@ class DefenderTab(QWidget):
             cursor.execute(f"""
                 WITH defender_stats AS (
                     SELECT * FROM matches 
-                    WHERE player_name = ? 
+                    WHERE name = ? 
                     AND LOWER(team) = LOWER('Defense')
                     {map_filter}
                 )
@@ -183,6 +185,8 @@ class DefenderTab(QWidget):
                     SUM(deaths) as deaths_total,
                     ROUND(AVG(deaths), 1) as deaths_avg,
                     ROUND(CAST(SUM(kills) AS FLOAT) / NULLIF(SUM(deaths), 0), 2) as kd_ratio,
+                    SUM(COALESCE(vehicle_damage, 0)) as vehicle_damage_total,
+                    ROUND(AVG(COALESCE(vehicle_damage, 0)), 1) as vehicle_damage_avg,
                     COUNT(*) as games_total,
                     SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) as victories,
                     ROUND(SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as win_rate,
@@ -194,6 +198,8 @@ class DefenderTab(QWidget):
                     ROUND(AVG(assists), 1) as assists_avg,
                     SUM(revives) as revives_total,
                     ROUND(AVG(revives), 1) as revives_avg,
+                    SUM(COALESCE(tactical_respawn, 0)) as tactical_respawn_total,
+                    ROUND(AVG(COALESCE(tactical_respawn, 0)), 1) as tactical_respawn_avg,
                     SUM(captures) as captures_total,
                     ROUND(AVG(captures), 1) as captures_avg,
                     MAX(captures) as captures_best,
@@ -229,5 +235,5 @@ class DefenderTab(QWidget):
                         
                     if key.endswith('rate'):
                         formatted_value += "%"
-                        
+
                     self.stat_labels[key].setText(formatted_value)

@@ -75,8 +75,16 @@ class MainWindow(QMainWindow):
     def setup_auto_backup(self):
         """Setup automatic backup timer"""
         self.backup_timer = QTimer(self)
-        self.backup_timer.timeout.connect(self.auto_backup)
+        self.backup_timer.timeout.connect(self.create_backup)
         self.backup_timer.start(3600000)  # Backup every hour
+
+    def create_backup(self):
+        """Perform automatic database backup"""
+        try:
+            backup_path = self.db.backup_database()
+            self.statusBar().showMessage(f"Backup created: {backup_path}", 3000)
+        except Exception as e:
+            self.statusBar().showMessage(f"Backup failed: {str(e)}", 5000)
 
     def setup_import_manager(self):
         """Setup import manager and run initial check"""
@@ -84,12 +92,50 @@ class MainWindow(QMainWindow):
 
     def setup_table(self):
         self.table = QTableWidget()
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels([
-            "Name", "Score", "Kills", "Deaths", 
-            "Assists", "Revives", "Captures"
-        ])
-        self.table.setSortingEnabled(True)
+        
+        # Define the column order we want to display
+        ordered_columns = [
+            'name',
+            'score',
+            'kills',
+            'deaths',
+            'assists',
+            'revives',
+            'captures',
+            'vehicle_damage',
+            'tactical_respawn'
+        ]
+        
+        # Get table info and filter columns
+        table_info = self.db.get_table_info()
+        if 'matches' in table_info:
+            excluded_columns = [
+                'id', 'snapshot_name', 'rank', 'class', 'team', 'date',  # Changed match_date to date
+                'combat_medal', 'capture_medal', 'logistics_medal', 'intelligence_medal',
+                'outcome', 'map'
+            ]
+            
+            # Keep only columns in our ordered list that exist in the database
+            self.display_columns = [col for col in ordered_columns 
+                                  if col in table_info['matches'] 
+                                  and col not in excluded_columns]
+            
+            # Setup column headers with proper display names
+            self.table.setColumnCount(len(self.display_columns))
+            header_labels = []
+            for col in self.display_columns:
+                if col == 'name':
+                    header_labels.append("Name")
+                else:
+                    header_labels.append(col.replace('_', ' ').title())
+            self.table.setHorizontalHeaderLabels(header_labels)
+        else:
+            # Fallback to default columns if table info not available
+            self.table.setColumnCount(7)
+            self.table.setHorizontalHeaderLabels([
+                "Name", "Score", "Kills", "Deaths", 
+                "Assists", "Revives", "Captures"
+            ])
 
         # Set column properties with stretch mode
         header = self.table.horizontalHeader()
@@ -149,7 +195,7 @@ class MainWindow(QMainWindow):
         backup_menu = menubar.addMenu("Backup")
         
         backup_action = QAction("Create Backup", self)
-        backup_action.triggered.connect(self.auto_backup)
+        backup_action.triggered.connect(self.create_backup)
         backup_menu.addAction(backup_action)
         
         restore_action = QAction("Restore Backup", self)
@@ -163,15 +209,19 @@ class MainWindow(QMainWindow):
             try:
                 with open(file_name, 'w', newline='') as csvfile:
                     writer = csv.writer(csvfile)
-                    # Write headers
-                    headers = [self.table.horizontalHeaderItem(i).text() 
-                             for i in range(self.table.columnCount())]
+                    # Write headers using actual column names
+                    headers = []
+                    for i in range(self.table.columnCount()):
+                        header = self.table.horizontalHeaderItem(i).text()
+                        headers.append(header)
                     writer.writerow(headers)
+                    
                     # Write data
                     for row in range(self.table.rowCount()):
                         row_data = [self.table.item(row, col).text() 
                                   for col in range(self.table.columnCount())]
                         writer.writerow(row_data)
+                        
                 QMessageBox.information(self, "Export Complete", 
                     "Statistics exported successfully!")
             except Exception as e:
@@ -191,94 +241,103 @@ class MainWindow(QMainWindow):
     def load_data_from_db(self):
         self.table.setSortingEnabled(False)
         self.save_column_widths()
-        self.table.setRowCount(0)
+        self.table.setRowCount(0)  # Clear the table first
         
         search_text = self.search_input.text().lower()
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                SELECT 
-                    player_name,
-                    SUM(score) as total_score,
-                    SUM(kills) as total_kills,
-                    SUM(deaths) as total_deaths,
-                    SUM(assists) as total_assists,
-                    SUM(revives) as total_revives,
-                    SUM(captures) as total_captures
-                FROM matches
-                GROUP BY player_name
-                HAVING LOWER(player_name) LIKE ?
-                ORDER BY total_score DESC
-            """, (f'%{search_text}%',))
-            data = cursor.fetchall()
-            
-            if data:
-                self.table.setRowCount(len(data))
-                for row, rowData in enumerate(data):
-                    for col, value in enumerate(rowData):
-                        if col == 0:  # Name column
-                            item = QTableWidgetItem(str(value))
-                        else:  # Numeric columns
-                            item = NumericSortItem(value)
-                            item.setTextAlignment(Qt.AlignCenter)
-                        self.table.setItem(row, col, item)
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Check if table exists and has data
+                cursor.execute("SELECT COUNT(*) FROM matches")
+                if cursor.fetchone()[0] == 0:
+                    # No data available, leave table empty
+                    self.restore_column_widths()
+                    self.table.setSortingEnabled(True)
+                    return
+
+                # Use the display columns for the query
+                numeric_columns = [
+                    'score', 'kills', 'deaths', 'assists', 'revives', 'captures',
+                    'vehicle_damage', 'tactical_respawn'
+                ]
+                
+                # Build query using display_columns order
+                select_parts = []
+                for col in self.display_columns:
+                    if col == 'name':
+                        select_parts.append('"name"')  # Quote the name column
+                    elif col in numeric_columns:
+                        select_parts.append(f"""
+                            CAST(SUM(CASE 
+                                WHEN "{col}" IS NOT NULL AND "{col}" != '' 
+                                THEN CAST("{col}" AS INTEGER) 
+                                ELSE 0 
+                            END) AS INTEGER) as total_{col}
+                        """.strip())
+                    else:
+                        select_parts.append(f'MAX("{col}") as {col}')
+                
+                query = f"""
+                    SELECT {', '.join(select_parts)}
+                    FROM matches
+                    WHERE LOWER("name") LIKE ?
+                    GROUP BY "name"
+                    ORDER BY total_score DESC
+                """
+                
+                cursor.execute(query, (f'%{search_text}%',))
+                data = cursor.fetchall()
+                
+                if data:
+                    self.table.setRowCount(len(data))
+                    for row, rowData in enumerate(data):
+                        for col, value in enumerate(rowData):
+                            if col == 0 or self.display_columns[col] not in numeric_columns:
+                                item = QTableWidgetItem(str(value) if value is not None else "")
+                            else:
+                                try:
+                                    num_value = int(value) if value is not None else 0
+                                    item = NumericSortItem(num_value)
+                                except (ValueError, TypeError):
+                                    item = QTableWidgetItem(str(value))
+                                item.setTextAlignment(Qt.AlignCenter)
+                            self.table.setItem(row, col, item)
         
-        if not self.column_widths:  # Only resize if no saved widths
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
+            print(f"Database error: {str(e)}")  # Add debug output
+            return  # Return early on error
+            
+        if not self.column_widths:
             self.table.resizeColumnsToContents()
         else:
             self.restore_column_widths()
             
-        self.table.setSortingEnabled(True)  # Re-enable sorting
-        self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)  # Default sort by score
-        
-        # Add tooltips to column headers
-        tooltips = [
-            "Player Name",
-            "Total Score Across All Games",
-            "Total Kills Across All Games",
-            "Total Deaths Across All Games",
-            "Total Assists Across All Games",
-            "Total Revives Across All Games",
-            "Total Captures Across All Games"
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
+
+        # Add dynamic tooltips with better type awareness and error checking
+        numeric_columns = [
+            'score', 'kills', 'deaths', 'assists', 'revives', 'captures',
+            'vehicle_damage', 'tactical_respawn'
         ]
-        for col, tooltip in enumerate(tooltips):
-            self.table.horizontalHeaderItem(col).setToolTip(tooltip)
+        
+        # Only set tooltips if we have valid columns and headers
+        if self.display_columns:
+            for col in range(self.table.columnCount()):
+                header_item = self.table.horizontalHeaderItem(col)
+                if header_item and col < len(self.display_columns):  # Check both exist
+                    if self.display_columns[col] in numeric_columns:
+                        tooltip = f"Total {self.display_columns[col].replace('_', ' ').title()} Across All Games"
+                    else:
+                        tooltip = self.display_columns[col].replace('_', ' ').title()
+                    header_item.setToolTip(tooltip)
 
     def on_search(self, text):
         """Handler for search input changes"""
         self.load_data_from_db()
-
-    def check_duplicate_data(self, cursor, rows):
-        # Get a hash of the data by concatenating all values
-        data_hash = []
-        for row in rows:
-            data_hash.append('|'.join(str(x) for x in row))
-        data_hash = sorted(data_hash)  # Sort to ensure consistent comparison
-        
-        # Check existing snapshots
-        cursor.execute("SELECT DISTINCT snapshot_name FROM matches")
-        snapshots = cursor.fetchall()
-        
-        for snapshot in snapshots:
-            cursor.execute("""
-                SELECT rank, class, player_name, score, kills, deaths, assists, revives, captures 
-                FROM matches 
-                WHERE snapshot_name = ?
-            """, (snapshot[0],))
-            existing_data = cursor.fetchall()
-            
-            # Create hash of existing data
-            existing_hash = []
-            for row in existing_data:
-                existing_hash.append('|'.join(str(x) for x in row))
-            existing_hash = sorted(existing_hash)
-            
-            # Compare hashes
-            if data_hash == existing_hash:
-                return True, snapshot[0]
-        
-        return False, None
 
     def import_csv(self):
         file_names, _ = QFileDialog.getOpenFileNames(self, "Import CSV Files", "", "CSV Files (*.csv)")
@@ -288,42 +347,15 @@ class MainWindow(QMainWindow):
             skipped_count = 0
             
             for file_name in file_names:
-                try:
-                    with open(file_name, newline='') as csvfile:
-                        csvreader = csv.reader(csvfile)
-                        headers = next(csvreader)  # Skip header row
-                        rows = list(csvreader)
-                    
-                    if not rows:
-                        continue
-                        
-                    # Get metadata from first row
-                    first_row = rows[0]
-                    match_id = f"{first_row[0]} - {first_row[1]} - {first_row[2]} - {first_row[3]}"
-                    
-                    # Check for duplicate data
-                    is_duplicate, existing_match = self.db.check_duplicate_data(rows)
-                    
-                    if is_duplicate:
-                        skipped_count += 1
-                        self.statusBar().showMessage(
-                            f"Skipped duplicate data (matches: {existing_match})", 
-                            3000
-                        )
-                        continue
-                    
-                    # Import the data
-                    if self.db.import_csv(file_name):
-                        imported_count += 1
-                        self.statusBar().showMessage(f"Imported: {match_id}", 3000)
-
-                except Exception as e:
-                    QMessageBox.critical(self, "Error", 
-                        f"Failed to import {os.path.basename(file_name)}: {str(e)}")
+                if self.db.import_csv(file_name):
+                    imported_count += 1
+                    self.statusBar().showMessage(f"Imported: {file_name}", 3000)
+                else:
+                    skipped_count += 1
+                    self.statusBar().showMessage(f"Skipped duplicate file: {file_name}", 3000)
             
             self.load_data_from_db()
             
-            # Show summary message
             summary = f"Successfully imported {imported_count} file(s)"
             if skipped_count > 0:
                 summary += f"\nSkipped {skipped_count} duplicate file(s)"
@@ -363,14 +395,6 @@ class MainWindow(QMainWindow):
     def on_item_clicked(self, item):
         """Select the entire row when any cell is clicked"""
         self.table.selectRow(item.row())
-
-    def auto_backup(self):
-        """Perform automatic database backup"""
-        try:
-            backup_path = self.db.backup_database()
-            self.statusBar().showMessage(f"Backup created: {backup_path}", 3000)
-        except Exception as e:
-            self.statusBar().showMessage(f"Backup failed: {str(e)}", 5000)
 
     def restore_from_backup(self):
         """Restore database from a backup file"""
@@ -458,14 +482,12 @@ class MainWindow(QMainWindow):
                     # Find matching filepath from new_files tuple
                     matching_file = next((f[1] for f in new_files if f[0] == filename), None)
                     if matching_file:
-                        try:
-                            self.import_manager.import_file(matching_file)
+                        if self.db.import_csv(matching_file):
                             self.statusBar().showMessage(f"Imported: {filename}", 3000)
-                        except Exception as e:
+                        else:
                             QMessageBox.critical(self, "Error", 
-                                f"Failed to import {filename}: {str(e)}")
+                                f"Failed to import {filename}")
                 
-                # Refresh the table after importing
                 self.load_data_from_db()
 
 if __name__ == "__main__":

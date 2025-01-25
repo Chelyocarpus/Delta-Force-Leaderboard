@@ -22,8 +22,16 @@ class ClassTab(QWidget):
                 SELECT 
                     class,
                     COUNT(*) as games,
-                    AVG(score) as avg_score,
-                    MAX(score) as best_score,
+                    SUM(CAST(CASE 
+                        WHEN score GLOB '*[0-9]*' AND score NOT GLOB '*[A-Za-z]*'
+                        THEN score 
+                        ELSE '0' 
+                    END AS INTEGER)) as total_score,
+                    MAX(CAST(CASE 
+                        WHEN score GLOB '*[0-9]*' AND score NOT GLOB '*[A-Za-z]*'
+                        THEN score 
+                        ELSE '0' 
+                    END AS INTEGER)) as best_score,
                     SUM(kills) as total_kills,
                     AVG(kills) as avg_kills,
                     SUM(deaths) as total_deaths,
@@ -41,12 +49,16 @@ class ClassTab(QWidget):
                     CAST(
                         SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) * 100.0 / 
                         NULLIF(COUNT(*), 0) AS FLOAT
-                    ) as win_rate
+                    ) as win_rate,
+                    SUM(CAST(vehicle_damage as INTEGER)) as total_vehicle_damage,
+                    AVG(CAST(vehicle_damage as INTEGER)) as avg_vehicle_damage,
+                    SUM(CAST(tactical_respawn as INTEGER)) as total_tactical_respawn,
+                    AVG(CAST(tactical_respawn as INTEGER)) as avg_tactical_respawn
                 FROM matches
-                WHERE player_name = ? AND class != ''
+                WHERE name = ? AND class != ''
                 GROUP BY class
             """, (self.player_name,))
-            
+
             # Debug print to check what's being returned
             print(f"Class stats for {self.player_name}:")
             results = cursor.fetchall()
@@ -59,54 +71,63 @@ class ClassTab(QWidget):
             # Create class groups in the specified order
             for class_name in PLAYER_CLASSES:
                 # Show all classes even with no data
-                class_data = class_stats_dict.get(class_name, [0] * 19)  # Fill with zeros if no data
+                class_data = class_stats_dict.get(class_name, [0] * 23)  # Updated for new fields
                 class_group = QGroupBox(class_name)
                 class_layout = QGridLayout()
+                class_layout.setAlignment(Qt.AlignTop)  # Align contents to top
                 
+                # Reorganized stat groups to match overall tab
                 stat_groups = {
-                    "Summary": [
+                    "Performance Summary": [
                         ("Games Played:", class_data[1]),
-                        ("Average Rank:", class_data[15]),
                         ("Victories:", class_data[16]),
                         ("Defeats:", class_data[17]),
-                        ("Win Rate:", f"{class_data[18]}%")
+                        ("Win Rate:", f"{class_data[18]:.1f}%"),
+                        ("Average Rank:", int(class_data[15]))
                     ],
-                    "Score": [
-                        ("Average Score:", class_data[2]),
-                        ("Best Score:", class_data[3])
+                    "Combat Stats": [
+                        ("Total Score:", class_data[2]),  # This is now total_score
+                        ("Average Score:", int(class_data[2] / class_data[1]) if class_data[1] > 0 else 0),  # Calculate average from total
+                        ("Best Score:", class_data[3])  # This is now best_score
                     ],
-                    "Combat": [
+                    "Combat Performance": [
                         ("Total Kills:", class_data[4]),
-                        ("Average Kills:", class_data[5]),
+                        ("Average Kills:", int(class_data[5])),
                         ("Total Deaths:", class_data[6]),
-                        ("Average Deaths:", class_data[7]),
-                        ("K/D Ratio:", class_data[8])
+                        ("Average Deaths:", int(class_data[7])),
+                        ("K/D Ratio:", f"{class_data[8]:.2f}"),
+                        ("Total Vehicle Damage:", class_data[19]),
+                        ("Average Vehicle Damage:", int(class_data[20]))
                     ],
-                    "Support": [
+                    "Support Stats": [
                         ("Total Assists:", class_data[9]),
-                        ("Average Assists:", class_data[10]),
+                        ("Average Assists:", int(class_data[10])),
                         ("Total Revives:", class_data[11]),
-                        ("Average Revives:", class_data[12])
+                        ("Average Revives:", int(class_data[12])),
+                        ("Total Tactical Respawns:", class_data[21]),
+                        ("Average Tactical Respawns:", int(class_data[22]))
                     ],
-                    "Objectives": [
+                    "Objective Stats": [
                         ("Total Captures:", class_data[13]),
-                        ("Average Captures:", class_data[14])
+                        ("Average Captures:", int(class_data[14]))
                     ]
                 }
                 
-                row = 0
-                for group_name, stats in stat_groups.items():
+                # Create stat boxes with improved layout
+                for idx, (group_name, stats) in enumerate(stat_groups.items()):
                     sub_group = QGroupBox(group_name)
                     sub_layout = QGridLayout()
+                    sub_layout.setAlignment(Qt.AlignTop)
                     
                     for i, (label, value) in enumerate(stats):
                         sub_layout.addWidget(QLabel(label), i, 0)
                         formatted_value = self.format_value(value, label)
-                        sub_layout.addWidget(QLabel(formatted_value), i, 1)
+                        value_label = QLabel(formatted_value)
+                        value_label.setAlignment(Qt.AlignLeft)
+                        sub_layout.addWidget(value_label, i, 1)
                     
                     sub_group.setLayout(sub_layout)
-                    class_layout.addWidget(sub_group, row // 2, row % 2)
-                    row += 1
+                    class_layout.addWidget(sub_group, idx // 3, idx % 3)
                 
                 class_group.setLayout(class_layout)
                 layout.addWidget(class_group)
@@ -126,10 +147,9 @@ class ClassTab(QWidget):
     def format_value(self, value, label):
         """Helper method to format values consistently"""
         if isinstance(value, float):
-            if "Ratio" in label:
+            if "K/D Ratio" in label:
                 return f"{value:.2f}"
-            elif "%" in label:
+            elif "Win Rate" in label:
                 return f"{value:.1f}%"
-            else:
-                return f"{int(value)}"
+            return f"{int(value)}"  # Round all other floats to integers
         return str(value)
