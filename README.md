@@ -1,7 +1,7 @@
 # delta-force-leaderboard
-![Splash Screen](https://github.com/user-attachments/assets/6988feac-4adf-4b05-b853-e46de93c5fbf)
+(![Splash Screen](https://github.com/user-attachments/assets/afe99d59-28dc-4896-81fa-3025da782333)
 
-This project is designed to process and analyze player statistics from the Delta Force video game using OCR (Optical Character Recognition) and data processing techniques. The project consists of several scripts that handle different aspects of the workflow, from preparing the screenshot for OCR, performing OCR on images, processing and cleaning the extracted data, and finally displaying the results in a user-friendly GUI.
+This project processes and analyzes player statistics from the Delta Force video game using OCR and data processing techniques, aiming to provide detailed insights and analytics for players. The project consists of several scripts that handle different aspects of the workflow, from preparing the screenshot for OCR, performing OCR on images, processing and cleaning the extracted data, and finally displaying the results in a user-friendly GUI.
 
 Despite its name, this project could be adapted to any video game that features a scoreboard or statistics. The OCR and file structure allows for customization to fit different game formats and data structures, making it a versatile tool for analyzing player performance across various games.
 
@@ -11,7 +11,7 @@ It is a also prime example of the capabilities of AI tools like GitHub Copilot, 
 
 📊 **Comprehensive Statistics**
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/4426d914-d115-4627-a07e-c64748435dd6" width="50%" />
+    <img src="https://github.com/user-attachments/assets/c8403b36-7b3a-4e52-a56f-bfc8d6fb8185" width="50%" />
 </p>
 
 - Detailed player performance metrics including K/D ratio, assists, revives and captures
@@ -21,7 +21,7 @@ It is a also prime example of the capabilities of AI tools like GitHub Copilot, 
 
 🎖️ **Medal Recognition System**
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/735bbf50-c680-47c5-8e5c-57c32eeaf895" width="50%" />
+    <img src="https://github.com/user-attachments/assets/37d62074-78b2-48b5-9861-19e5cc2cd619" width="50%" />
 </p>
 
 - Automatic detection of Combat, Capture, Logistics, and Intelligence medals
@@ -31,7 +31,7 @@ It is a also prime example of the capabilities of AI tools like GitHub Copilot, 
 
 ⚔️ **Multi-Role Support**
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/81861a9c-8b75-4b08-95d1-d1b971997377" width="50%" />
+    <img src="https://github.com/user-attachments/assets/3a18e9ad-8d71-48d4-97f7-db747de10232" width="50%" />
 </p>
 
 - Specialized tracking for Support, Recon, Assault, and Engineer classes
@@ -40,7 +40,7 @@ It is a also prime example of the capabilities of AI tools like GitHub Copilot, 
 
 🎯 **Map Intelligence**
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/d5b5e09e-140b-4365-95bb-ddcac599b88c" width="50%" />
+    <img src="https://github.com/user-attachments/assets/3fe6d2f3-27e6-4e1a-9262-6fa6a27b67d8" width="50%" />
 </p>
 
 - Performance tracking across different battlefields
@@ -49,7 +49,7 @@ It is a also prime example of the capabilities of AI tools like GitHub Copilot, 
 
 🤝 **Team Analytics**
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/5f5c8f92-af55-4923-865b-8d5e4ea90948" width="50%" />
+    <img src="https://github.com/user-attachments/assets/980074c0-7d39-417b-90a8-6a8de87a1c1a" width="50%" />
 </p>
 
 - Detailed team performance metrics
@@ -58,7 +58,7 @@ It is a also prime example of the capabilities of AI tools like GitHub Copilot, 
 
 💾 **Database Management**
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/ad4ea027-612c-4f2a-aa83-683f7f122a06" width="50%" />
+  <img src="https://github.com/user-attachments/assets/7e9feb4c-93d8-452f-ac9e-6e61cd977b18" width="50%" />
 </p>
 
 - Comprehensive automated backup system that creates hourly snapshots of the database to prevent data loss
@@ -128,7 +128,7 @@ It is a also prime example of the capabilities of AI tools like GitHub Copilot, 
 
 # Dependencies
 > [!tip]
-> `pip install -r requirements.txt`
+> To install the necessary dependencies, run the following command in your terminal: `pip install -r requirements.txt`
 
 - python-doctr==0.6.0
 - python-doctr[torch]
