@@ -1,0 +1,10 @@
+
+leaderboard_empty.db
+leaderboard.db
+/workflow
+/components/workflow
+*.backup
+*.pyc
+*.db-shm
+*.db-wal
+imported_files.json
