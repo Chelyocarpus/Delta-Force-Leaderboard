@@ -8,12 +8,87 @@ from pathlib import Path
 from typing import List
 import time
 import json
+from contextlib import contextmanager
+from queue import Queue
+from threading import Lock
 
 # Constants
 DB_FILENAME = 'leaderboard.db'
 TABLE_NAME = 'matches'
 BACKUP_PREFIX = 'leaderboard_'
 BACKUP_SUFFIX = '.backup'
+
+class ConnectionPool:
+    def __init__(self, db_path, max_connections=5):
+        self.db_path = db_path
+        self.max_connections = max_connections
+        self.pool = Queue(maxsize=max_connections)
+        self.lock = Lock()
+        self.active_connections = 0
+        
+        # Pre-create some connections
+        for _ in range(max_connections // 2):
+            self._create_connection()
+
+    def _create_connection(self):
+        """Create a new database connection"""
+        if self.active_connections < self.max_connections:
+            try:
+                conn = sqlite3.connect(self.db_path)
+                conn.row_factory = sqlite3.Row
+                with self.lock:
+                    self.active_connections += 1
+                self.pool.put(conn)
+            except sqlite3.Error as e:
+                print(f"Error creating connection: {e}")
+
+    @contextmanager
+    def get_connection(self):
+        """Get a connection from the pool"""
+        connection = None
+        try:
+            if self.pool.empty() and self.active_connections < self.max_connections:
+                self._create_connection()
+            connection = self.pool.get()
+            
+            # Test if connection is valid
+            try:
+                connection.cursor()
+                yield connection
+            except sqlite3.Error:
+                # Connection is invalid, create new one
+                connection.close()
+                with self.lock:
+                    self.active_connections -= 1
+                self._create_connection()
+                connection = self.pool.get()
+                yield connection
+                
+        finally:
+            if connection:
+                try:
+                    connection.commit()  # Auto-commit any changes
+                    self.pool.put(connection)
+                except sqlite3.Error:
+                    # If connection is invalid, close it and create new one
+                    try:
+                        connection.close()
+                    except sqlite3.Error:
+                        pass
+                    with self.lock:
+                        self.active_connections -= 1
+                    self._create_connection()
+
+    def close_all(self):
+        """Close all connections in the pool"""
+        while not self.pool.empty():
+            try:
+                conn = self.pool.get()
+                conn.close()
+                with self.lock:
+                    self.active_connections -= 1
+            except sqlite3.Error:
+                pass
 
 class Database:
     def __init__(self):
@@ -27,11 +102,14 @@ class Database:
         self.db_path = str(self.data_dir / DB_FILENAME)
         print(f"Debug - Using database at: {self.db_path}")
         
+        # Initialize connection pool
+        self.pool = ConnectionPool(self.db_path)
+
         self.create_database()
 
     def get_connection(self):
-        """Get a database connection"""
-        return sqlite3.connect(self.db_path)
+        """Get a database connection from the pool"""
+        return self.pool.get_connection()
 
     def create_database(self):
         """Create database with minimal required structure"""
@@ -86,8 +164,12 @@ class Database:
             with self.get_connection() as conn:
                 cursor = conn.cursor()
                 cursor.execute(f"""
-                    SELECT DISTINCT data, outcome, map, team 
+                    SELECT DISTINCT snapshot_name, 
+                           GROUP_CONCAT(name) as players,
+                           COUNT(*) as player_count,
+                           SUM(CAST(score as INTEGER)) as total_score
                     FROM {TABLE_NAME}
+                    GROUP BY snapshot_name
                 """)
                 return cursor.fetchall()
         except Exception as e:
@@ -100,125 +182,137 @@ class Database:
             with open(file_path, 'r', newline='') as csvfile:
                 csvreader = csv.reader(csvfile)
                 headers = next(csvreader)  # Skip header
-                rows = list(csvreader)  # Get all rows
+                rows = list(csvreader)
                 
                 if not rows:
                     return False
-                    
-                first_row = rows[0]
+
+                # Calculate key metrics for comparison
+                players = sorted([row[6] for row in rows if len(row) > 6])
+                total_score = sum(int(row[7]) for row in rows if len(row) > 7 and row[7].isdigit())
+                player_count = len(players)
+                snapshot_name = self._create_snapshot_name(headers, rows[0])
+                
                 imported_matches = self.get_imported_match_identifiers()
                 
-                # Check if this match's metadata matches any in database
-                # Reorder to match_date, outcome, map, team
-                match_data = (first_row[2], first_row[0], first_row[1], first_row[3])
-                return match_data in imported_matches
+                for match in imported_matches:
+                    stored_snapshot, stored_players, stored_count, stored_score = match
+                    stored_players = sorted(stored_players.split(','))
+                    
+                    # Consider it duplicate if:
+                    # 1. Same snapshot name
+                    # 2. Same number of players
+                    # 3. Similar total score (within 5% variance)
+                    # 4. At least 80% of player names match
+                    if (stored_snapshot == snapshot_name and 
+                        stored_count == player_count and
+                        abs(stored_score - total_score) < (total_score * 0.05)):
+                        
+                        # Check player overlap
+                        common_players = set(players) & set(stored_players)
+                        if len(common_players) >= (player_count * 0.8):
+                            return True
+                            
+                return False
                     
         except Exception as e:
             print(f"Error checking for duplicates: {e}")
             return False
 
-    def import_csv(self, file_path):
-        """Import CSV file into database with dynamic columns"""
+    def _read_csv_headers(self, file_path: str) -> tuple[list, csv.reader]:
+        """Read CSV headers and return headers and reader object."""
         try:
-            # First check for duplicates
-            if self.is_duplicate_file(file_path):
-                print(f"Skipping duplicate file: {file_path}")
-                return False
-            
-            # Step 1: Read headers and create columns first
-            try:
-                with open(file_path, 'r', newline='') as csvfile:
-                    reader = csv.reader(csvfile)
-                    headers = next(reader)
-                    if not headers:
-                        raise ValueError("No headers found in CSV file")
-                    
-                    print(f"Importing file: {file_path}")
-                    print(f"Found headers: {headers}")
-                    
-                    # Create column mapping before any data insertion
-                    header_mapping = self._ensure_columns_exist(headers)
-            except Exception as e:
-                print(f"Error reading CSV headers: {str(e)}")
-                return False
-            
-            # Step 2: Now read and insert the data
-            try:
-                with open(file_path, 'r', newline='') as csvfile:
-                    reader = csv.reader(csvfile)
-                    next(reader)  # Skip headers
-                    rows = list(reader)
-                    
-                    if not rows:
-                        print("No data rows found in CSV file")
-                        return False
-                    
-                    print(f"Found {len(rows)} data rows")
-                    
-                    # Create snapshot name from first row
-                    try:
-                        first_row = {headers[i]: rows[0][i] for i in range(len(headers))}
-                        snapshot_name = f"{first_row['Outcome']} - {first_row['Map']} - {first_row['Data']} - {first_row['Team']}"
-                        print(f"Creating snapshot: {snapshot_name}")
-                    except KeyError as e:
-                        print(f"Missing required column in CSV: {str(e)}")
-                        return False
-                    except IndexError:
-                        print("Invalid row format in CSV")
-                        return False
-                    
-                    # Convert rows to dictionaries with mapped column names
-                    records = []
-                    for i, row in enumerate(rows, 1):
-                        try:
-                            record = {'snapshot_name': snapshot_name}
-                            for j, value in enumerate(row):
-                                if j < len(headers):
-                                    column_name = header_mapping[headers[j]]
-                                    record[column_name] = value
-                            records.append(record)
-                        except Exception as e:
-                            print(f"Error processing row {i}: {str(e)}")
-                            print(f"Row content: {row}")
-                            continue
-                    
-                    if not records:
-                        print("No valid records to import")
-                        return False
-                    
-                    # Import to database
-                    try:
-                        with self.get_connection() as conn:
-                            cursor = conn.cursor()
-                            columns = list(records[0].keys())
-                            placeholders = ','.join(['?' for _ in columns])
-                            columns_str = ','.join([f'"{col}"' for col in columns])
-                            
-                            for i, record in enumerate(records, 1):
-                                try:
-                                    values = [record[col] for col in columns]
-                                    query = f"INSERT INTO {TABLE_NAME} ({columns_str}) VALUES ({placeholders})"
-                                    cursor.execute(query, values)
-                                except sqlite3.Error as e:
-                                    print(f"Database error on row {i}: {str(e)}")
-                                    print(f"Failed record: {record}")
-                                    continue
-                            
-                            conn.commit()
-                            print(f"Successfully imported {len(records)} records")
-                            return True
-                            
-                    except sqlite3.Error as e:
-                        print(f"Database connection error: {str(e)}")
-                        return False
-                        
-            except Exception as e:
-                print(f"Error reading CSV data: {str(e)}")
-                return False
-                
+            csvfile = open(file_path, 'r', newline='')
+            reader = csv.reader(csvfile)
+            headers = next(reader)
+            if not headers:
+                raise ValueError("No headers found in CSV file")
+            return headers, reader
         except Exception as e:
-            print(f"General import error: {str(e)}")
+            raise IOError(f"Failed to read CSV headers: {e}")
+
+    def _process_csv_rows(self, reader: csv.reader, headers: list) -> list:
+        """Process CSV rows and return list of data rows."""
+        rows = list(reader)
+        if not rows:
+            raise ValueError("No data rows found in CSV file")
+        return rows
+
+    def _create_snapshot_name(self, headers: list, first_row: list) -> str:
+        """Create snapshot name from first row data."""
+        row_dict = {headers[i]: first_row[i] for i in range(len(headers))}
+        return (f"{row_dict['Outcome']} - {row_dict['Map']} - "
+                f"{row_dict['Data']} - {row_dict['Team']}")
+
+    def _prepare_records(self, rows: list, headers: list, 
+                        header_mapping: dict, snapshot_name: str) -> list:
+        """Convert rows to database records."""
+        records = []
+        for row in rows:
+            record = {'snapshot_name': snapshot_name}
+            for j, value in enumerate(row):
+                if j < len(headers):
+                    column_name = header_mapping[headers[j]]
+                    record[column_name] = value
+            records.append(record)
+        return records
+
+    def _insert_records(self, records: list) -> None:
+        """Insert records into database."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            columns = list(records[0].keys())
+            placeholders = ','.join(['?' for _ in columns])
+            columns_str = ','.join([f'"{col}"' for col in columns])
+            
+            for record in records:
+                values = [record[col] for col in columns]
+                cursor.execute(f"INSERT INTO {TABLE_NAME} ({columns_str}) VALUES ({placeholders})", values)
+
+    def import_csv(self, file_path: str) -> bool:
+        """Import CSV file into database with dynamic columns."""
+        if not os.path.exists(file_path):
+            print(f"File not found: {file_path}")
             return False
+
+        if self.is_duplicate_file(file_path):
+            print(f"Skipping duplicate file: {file_path}")
+            return False
+
+        try:
+            # Read and validate CSV
+            headers, reader = self._read_csv_headers(file_path)
+            print(f"Importing file: {file_path}")
+            print(f"Found headers: {headers}")
+
+            # Process rows
+            rows = self._process_csv_rows(reader, headers)
+            print(f"Found {len(rows)} data rows")
+
+            # Create column mapping and ensure columns exist
+            header_mapping = self._ensure_columns_exist(headers)
+
+            # Create snapshot and prepare records
+            snapshot_name = self._create_snapshot_name(headers, rows[0])
+            records = self._prepare_records(rows, headers, header_mapping, snapshot_name)
+
+            # Insert records into database
+            self._insert_records(records)
+            print(f"Successfully imported {len(records)} records")
+            return True
+
+        except (IOError, ValueError) as e:
+            print(f"Import error: {e}")
+            return False
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            return False
+        except Exception as e:
+            print(f"Unexpected error during import: {e}")
+            return False
+        finally:
+            if 'reader' in locals() and hasattr(reader, 'close'):
+                reader.close()
 
     def backup_database(self):
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -228,14 +322,8 @@ class Database:
         return backup_path
 
     def restore_backup(self, backup_path):
+        """Restore database from backup file"""
         if os.path.exists(backup_path):
-            # Close any existing connections
-            try:
-                conn = self.get_connection()
-                conn.close()
-            except:
-                pass
-            
             shutil.copy2(backup_path, self.db_path)
             return True
         return False
@@ -256,7 +344,7 @@ class Database:
                     
                 # Get metadata from first row
                 first_row = rows[0]
-                outcome, map_name, match_date, team = first_row[0:4]
+                outcome, map_name, match_date, team = first_row[:4]  # Simplified slice notation
                 
                 # First check: Look for matches with same metadata
                 cursor.execute(f"""
@@ -339,71 +427,25 @@ class Database:
             print(f"Error importing match data: {e}")
             return False
 
-    def _close_all_connections(self) -> bool:
-        """Try to close all database connections"""
-        try:
-            # Create temporary connection to force other connections to close
-            with self.get_connection() as temp_conn:
-                cursor = temp_conn.cursor()
-                
-                # This will force other connections to close
-                cursor.execute("PRAGMA wal_checkpoint(FULL)")
-                cursor.execute("PRAGMA optimize")
-                temp_conn.commit()
-                
-                # Small delay to ensure connections are closed
-                time.sleep(0.5)
-                return True
-        except Exception as e:
-            print(f"Error closing connections: {e}")
-            return False
-
-    def _force_close_connections(self) -> None:
-        """Close all database connections forcefully"""
-        try:
-            # Get a new connection and force close all others
-            with self.get_connection() as temp_conn:
-                temp_cursor = temp_conn.cursor()
-                
-                # Force close other connections
-                temp_cursor.execute("PRAGMA optimize")
-                temp_cursor.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                temp_conn.commit()
-                
-                # Windows needs extra time to release file handles
-                time.sleep(1)
-        except Exception as e:
-            print(f"Error forcing connections closed: {e}")
-
     def purge_database(self) -> bool:
         """Delete all data from the database without deleting the file"""
         try:
-            # Create backup first
             backup_path = self.backup_database()
             print(f"Created backup at: {backup_path}")
             
-            # Instead of deleting file, drop and recreate tables
-            try:
-                with self.get_connection() as conn:
-                    cursor = conn.cursor()
-                    
-                    # Drop all tables
-                    cursor.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
-                    
-                    # Recreate tables
-                    self.create_database()
-                    
-                    return True
-                    
-            except Exception as e:
-                print(f"Error during purge: {e}")
-                return False
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(f"DROP TABLE IF EXISTS {TABLE_NAME}")
+                self.create_database()
+                return True
 
         except Exception as e:
-            print(f"Error during backup before purge: {e}")
+            print(f"Error during purge/backup: {e}")
             return False
 
-if __name__ == "__main__":
-    pass
+    def __del__(self):
+        """Cleanup when object is destroyed"""
+        if hasattr(self, 'pool'):
+            self.pool.close_all()
 
 __all__ = ['Database']

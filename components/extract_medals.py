@@ -36,7 +36,7 @@ def process_images_in_folder(folder_path, pixel_checks, medals):
             highest_rank_medals = get_highest_rank_medals(image_path, pixel_checks, medals)
             output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workflow')
             os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f"{"medals_" + os.path.splitext(filename)[0]}" + ".txt")
+            output_path = os.path.join(output_dir, f"medals_{os.path.splitext(filename)[0]}.txt")
             with open(output_path, 'w') as f:
                 for medal in highest_rank_medals:
                     f.write(f"{medal}\n")

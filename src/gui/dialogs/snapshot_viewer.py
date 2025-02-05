@@ -1,3 +1,4 @@
+import sqlite3
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, 
                            QTableWidgetItem, QPushButton, QLineEdit, QLabel,
                            QHeaderView, QMessageBox, QComboBox, QApplication)
@@ -136,88 +137,98 @@ class SnapshotViewerDialog(QDialog):
     def refresh_snapshots(self):
         self.table.setRowCount(0)  # Clear table first
         
-        # Check if table has data
-        with self.parent.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM matches")
-            if cursor.fetchone()[0] == 0:
-                return  # Don't try to load data if table is empty
+        try:
+            with self.parent.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM matches")
+                if cursor.fetchone()[0] == 0:
+                    return
+                
+            search_text = self.search_input.text().lower()
+            map_filter = self.map_filter.currentText()
+            outcome_filter = self.outcome_filter.currentText()
+            date_filter = self.date_filter.currentText()
+            
+            with self.parent.db.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # First detect the date column
+                cursor.execute("PRAGMA table_info(matches)")
+                columns = [col[1] for col in cursor.fetchall()]
+                date_column = 'data'
+                
+                query = f"""
+                    SELECT 
+                        {date_column},
+                        map,
+                        outcome,
+                        team,
+                        COUNT(DISTINCT name) as player_count,
+                        SUM(CAST(score as INTEGER)) as total_score,
+                        (SELECT name FROM matches m2 
+                         WHERE m2.{date_column} = m1.{date_column} 
+                         AND m2.map = m1.map 
+                         AND m2.team = m1.team 
+                         ORDER BY CAST(score as INTEGER) DESC LIMIT 1) as top_player,
+                        MAX(CAST(score as INTEGER)) as top_score,
+                        outcome || ' - ' || map || ' - ' || {date_column} || ' - ' || team as snapshot_name
+                    FROM matches m1
+                    WHERE (LOWER(map) LIKE ? OR LOWER(outcome) LIKE ?)
+                        AND (? = 'All Maps' OR map = ?)
+                        AND (? = 'All Outcomes' OR 
+                             (? = 'Victory' AND outcome LIKE '%VICTORY%') OR 
+                             (? = 'Defeat' AND outcome LIKE '%DEFEAT%'))
+                        AND (? = 'All Dates' OR {date_column} = ?)
+                    GROUP BY {date_column}, map, outcome, team
+                    ORDER BY {date_column} DESC, map ASC
+                """
+                
+                cursor.execute(query, (
+                    f'%{search_text}%', f'%{search_text}%',
+                    map_filter, map_filter,
+                    outcome_filter, outcome_filter, outcome_filter,
+                    date_filter, date_filter
+                ))
+                
+                for row_idx, row_data in enumerate(cursor.fetchall()):
+                    self.table.insertRow(row_idx)
+                    date, map_name, outcome, team, player_count, total_score, top_player, top_score, match_id = row_data
+                    
+                    # Format scores safely
+                    try:
+                        formatted_total = f"{int(total_score):,}" if total_score else "0"
+                        formatted_top = f"{int(top_score):,}" if top_score else "0"
+                    except (ValueError, TypeError):
+                        formatted_total = str(total_score)
+                        formatted_top = str(top_score)
+                    
+                    items = [
+                        (date, Qt.AlignCenter),
+                        (map_name, Qt.AlignLeft),
+                        (outcome, Qt.AlignCenter),
+                        (team, Qt.AlignCenter),
+                        (str(player_count), Qt.AlignCenter),
+                        (formatted_total, Qt.AlignRight),
+                        (top_player or "Unknown", Qt.AlignLeft),
+                        (formatted_top, Qt.AlignRight)
+                    ]
+                    
+                    for col, (value, alignment) in enumerate(items):
+                        item = QTableWidgetItem(str(value))
+                        item.setTextAlignment(alignment)
+                        if col == 0:  # Store match_id in first column
+                            item.setData(Qt.UserRole, match_id)
+                        self.table.setItem(row_idx, col, item)
         
-        search_text = self.search_input.text().lower()
-        map_filter = self.map_filter.currentText()
-        outcome_filter = self.outcome_filter.currentText()
-        date_filter = self.date_filter.currentText()
-        
-        with self.parent.db.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # First detect the date column
-            cursor.execute("PRAGMA table_info(matches)")
-            columns = [col[1] for col in cursor.fetchall()]
-            date_column = 'data'
-            
-            query = f"""
-                SELECT 
-                    {date_column},
-                    map,
-                    outcome,
-                    team,
-                    COUNT(DISTINCT name) as player_count,
-                    SUM(CAST(score as INTEGER)) as total_score,
-                    (SELECT name FROM matches m2 
-                     WHERE m2.{date_column} = m1.{date_column} 
-                     AND m2.map = m1.map 
-                     AND m2.team = m1.team 
-                     ORDER BY CAST(score as INTEGER) DESC LIMIT 1) as top_player,
-                    MAX(CAST(score as INTEGER)) as top_score,
-                    outcome || ' - ' || map || ' - ' || {date_column} || ' - ' || team as snapshot_name
-                FROM matches m1
-                WHERE (LOWER(map) LIKE ? OR LOWER(outcome) LIKE ?)
-                    AND (? = 'All Maps' OR map = ?)
-                    AND (? = 'All Outcomes' OR 
-                         (? = 'Victory' AND outcome LIKE '%VICTORY%') OR 
-                         (? = 'Defeat' AND outcome LIKE '%DEFEAT%'))
-                    AND (? = 'All Dates' OR {date_column} = ?)
-                GROUP BY {date_column}, map, outcome, team
-                ORDER BY {date_column} DESC, map ASC
-            """
-            
-            cursor.execute(query, (
-                f'%{search_text}%', f'%{search_text}%',
-                map_filter, map_filter,
-                outcome_filter, outcome_filter, outcome_filter,
-                date_filter, date_filter
-            ))
-            
-            for row_idx, row_data in enumerate(cursor.fetchall()):
-                self.table.insertRow(row_idx)
-                date, map_name, outcome, team, player_count, total_score, top_player, top_score, match_id = row_data
-                
-                # Format scores safely
-                try:
-                    formatted_total = f"{int(total_score):,}" if total_score else "0"
-                    formatted_top = f"{int(top_score):,}" if top_score else "0"
-                except (ValueError, TypeError):
-                    formatted_total = str(total_score)
-                    formatted_top = str(top_score)
-                
-                items = [
-                    (date, Qt.AlignCenter),
-                    (map_name, Qt.AlignLeft),
-                    (outcome, Qt.AlignCenter),
-                    (team, Qt.AlignCenter),
-                    (str(player_count), Qt.AlignCenter),
-                    (formatted_total, Qt.AlignRight),
-                    (top_player or "Unknown", Qt.AlignLeft),
-                    (formatted_top, Qt.AlignRight)
-                ]
-                
-                for col, (value, alignment) in enumerate(items):
-                    item = QTableWidgetItem(str(value))
-                    item.setTextAlignment(alignment)
-                    if col == 0:  # Store match_id in first column
-                        item.setData(Qt.UserRole, match_id)
-                    self.table.setItem(row_idx, col, item)
+        except sqlite3.OperationalError as e:
+            QMessageBox.critical(self, "Database Error", 
+                f"Failed to access the database: {str(e)}\nThe database might be locked or corrupted.")
+        except sqlite3.DatabaseError as e:
+            QMessageBox.critical(self, "Database Error",
+                f"A database error occurred: {str(e)}\nThe database might need repair.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error",
+                f"An unexpected error occurred while refreshing data: {str(e)}")
 
     def view_selected_snapshot(self):
         selected_rows = self.table.selectedItems()
@@ -243,16 +254,22 @@ class SnapshotViewerDialog(QDialog):
             try:
                 with self.parent.db.get_connection() as conn:
                     cursor = conn.cursor()
-                    # Use the match_id directly as snapshot_name
                     cursor.execute("DELETE FROM matches WHERE snapshot_name = ?", (match_id,))
                     conn.commit()
                     
-                self.refresh_snapshots()  # Refresh the view
-                self.parent.on_snapshot_deleted(match_id)  # Notify parent
+                self.refresh_snapshots()
+                self.parent.on_snapshot_deleted(match_id)
                 QMessageBox.information(self, "Success", "Match deleted successfully")
                 
+            except sqlite3.OperationalError as e:
+                QMessageBox.critical(self, "Database Error",
+                    f"Failed to delete match - database is locked or busy: {str(e)}\nPlease try again.")
+            except sqlite3.IntegrityError as e:
+                QMessageBox.critical(self, "Database Error",
+                    f"Cannot delete match due to database constraints: {str(e)}")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to delete match: {str(e)}")
+                QMessageBox.critical(self, "Error",
+                    f"An unexpected error occurred while deleting: {str(e)}")
 
     def on_row_double_clicked(self, row, _):  # Use underscore for unused parameter
         snapshot_name = self.table.item(row, 0).data(Qt.UserRole)  # Get match_id from UserRole data of first column
@@ -289,8 +306,14 @@ class SnapshotViewerDialog(QDialog):
                     QMessageBox.information(self, "Success", 
                         "Database has been purged successfully.\nA backup was created before purging.")
                 else:
-                    QMessageBox.critical(self, "Error", 
-                        "Failed to purge database.")
+                    raise Exception("Database purge operation failed")
+                    
+            except sqlite3.OperationalError as e:
+                QMessageBox.critical(self, "Database Error", 
+                    f"Failed to purge database - database is locked or busy: {str(e)}\nPlease close any other applications using the database.")
+            except sqlite3.DatabaseError as e:
+                QMessageBox.critical(self, "Database Error",
+                    f"A database error occurred during purge: {str(e)}\nThe database might need repair.")
             except Exception as e:
-                QMessageBox.critical(self, "Error", 
-                    f"Error during database purge: {str(e)}")
+                QMessageBox.critical(self, "Error",
+                    f"An unexpected error occurred during database purge: {str(e)}")
