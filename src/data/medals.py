@@ -23,28 +23,19 @@ class MedalProcessor:
         name = row[6]  # Name column
         if name not in USER:  # Only process medals for Adwdaa
             return None
-            
-        medals = []
-        
-        # Process each medal type
-        medal_data = {
+
+        return [{
+            'name': name,
+            'category': category,
+            'rank': rank,
+            'snapshot_name': snapshot_name,
+            'timestamp': timestamp
+        } for category, rank in {
             'Combat': row[13],
             'Capture': row[14],
             'Logistics': row[15],
             'Intelligence': row[16]
-        }
-        
-        for category, rank in medal_data.items():
-            if rank and rank.lower() != 'none':
-                medals.append({
-                    'name': name,
-                    'category': category,
-                    'rank': rank,
-                    'snapshot_name': snapshot_name,
-                    'timestamp': timestamp
-                })
-        
-        return medals if medals else None
+        }.items() if rank and rank.lower() != 'none'] or None
 
     def process_batch_medals(self, rows, snapshot_name, timestamp):
         """Process multiple rows of medals efficiently"""
@@ -100,9 +91,9 @@ class MedalProcessor:
             return None
 
         total_games = stats[0]
-        games_with_medals = sum(1 for i in range(1, 5) if stats[i] > 0)
+        games_with_medals = sum(bool(stats[i] > 0) for i in range(1, 5))
         
-        medal_stats = {
+        return {
             'total_games': total_games,
             'games_with_medals': games_with_medals,
             'medal_rate': (games_with_medals / total_games * 100) if total_games > 0 else 0,
@@ -135,5 +126,3 @@ class MedalProcessor:
                 }
             }
         }
-        
-        return medal_stats

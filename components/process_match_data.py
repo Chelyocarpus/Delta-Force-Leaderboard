@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Tuple
 import csv
-import datetime
 import logging
 from pathlib import Path
 
@@ -18,6 +17,7 @@ class Config:
         "Trench ines - Attack and Defend": "Trench Lines - Attack and Defend",
         "Trench ines-Attack and Defend": "Trench Lines - Attack and Defend",
         "Cracked-Attack and Defend": "Cracked - Attack and Defend",
+        "Shatted - Attack and Detend": "Shafted - Attack and Defend",
     }
     
     OUTCOME_CORRECTIONS = {
@@ -204,19 +204,16 @@ class MedalProcessor:
         lines = DataProcessor(self.config).read_file(filepath)
         if not lines:
             return {}
-
-        medals_dict = {}
-        for line in lines:
-            medal = line.strip()
-            if medal in self.config.MEDAL_TYPES:
-                medals_dict[medal] = medals_dict.get(medal, 0) + 1
-        return medals_dict
+        
+        return {medal: sum(1 for line in lines if line.strip() == medal)
+                for medal in self.config.MEDAL_TYPES}
 
     def get_highest_medal(self, medals: Dict[str, int], category: str) -> str:
-        for level in ["Gold", "Silver", "Bronze"]:
-            if f"{category} {level} Medal" in medals:
-                return level
-        return "None"
+        return next(
+            (level for level in ["Gold", "Silver", "Bronze"] 
+             if f"{category} {level} Medal" in medals),
+            "None"
+        )
 
 class MatchProcessor:
     def __init__(self, input_dir: str):
@@ -325,7 +322,7 @@ class MatchProcessor:
         try:
             hours, minutes, seconds = map(int, time_str.split(':'))
             return 0 <= hours < 24 and 0 <= minutes < 60 and 0 <= seconds < 60
-        except:
+        except Exception:
             return False
 
     def write_csv(self, output_file: Path, players: List[PlayerData], 

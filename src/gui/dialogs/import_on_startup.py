@@ -8,6 +8,18 @@ from PyQt5.QtWidgets import (
     QPushButton, QDialogButtonBox, QMessageBox, QCheckBox
 )
 
+class FileImportError(Exception):
+    """Raised when there is an error importing a file"""
+    pass
+
+class DuplicateFileError(Exception):
+    """Raised when attempting to import a duplicate file"""
+    pass
+
+class ImportManagerError(Exception):
+    """Raised when there is an error in the ImportManager"""
+    pass
+
 class ImportManager:
     def __init__(self, watch_folder: str = "../../../components/workflow") -> None:
         self.base_path = Path(__file__).resolve().parent
@@ -34,6 +46,8 @@ class ImportManager:
                 return imported
         except json.JSONDecodeError:
             print("Warning: Corrupted imported_files.json, starting fresh")
+        except (IOError, PermissionError, OSError) as e:
+            print(f"Warning: Could not access imported_files.json: {e}")
         except Exception as e:
             print(f"Debug - Error loading imported files: {e}")
         return []
@@ -43,7 +57,14 @@ class ImportManager:
 
     def _clean_imported_files(self) -> None:
         """Remove non-existent files from the imported files list"""
-        self.imported_files = [f for f in self.imported_files if Path(f).exists()]
+        cleaned_files = []
+        for f in self.imported_files:
+            try:
+                if Path(f).exists():
+                    cleaned_files.append(f)
+            except (IOError, PermissionError, OSError) as e:
+                print(f"Warning: Could not access file {f}: {e}")
+        self.imported_files = cleaned_files
         self._save_imported_files()
 
     def _validate_imported_files(self) -> None:
@@ -51,19 +72,19 @@ class ImportManager:
         if not self.imported_files:
             return
             
-        # Get all actual matches from database
-        db_matches = {str(Path(f).name): True for f in self.imported_files}
         valid_files = []
-        
         for file_path in self.imported_files:
-            file = Path(file_path)
-            if file.exists():
-                # Check if file is actually in database
-                is_in_db = self.db.is_duplicate_file(str(file))
-                if is_in_db:
-                    valid_files.append(file_path)
-                else:
-                    print(f"Debug - Removing from tracking, not in database: {file.name}")
+            try:
+                file = Path(file_path)
+                if file.exists():
+                    # Check if file is actually in database
+                    is_in_db = self.db.is_duplicate_file(str(file))
+                    if is_in_db:
+                        valid_files.append(file_path)
+                    else:
+                        print(f"Debug - Removing from tracking, not in database: {file.name}")
+            except (IOError, PermissionError, OSError) as e:
+                print(f"Warning: Could not access file {file_path}: {e}")
             
         self.imported_files = valid_files
         self._save_imported_files()
@@ -91,18 +112,22 @@ class ImportManager:
             print(f"Debug - Found {len(all_csvs)} CSV files in folder")
             
             for file in all_csvs:
-                file_str = str(file.absolute())
-                print(f"Debug - Checking file: {file.name}")
-                
-                # Only check database, since tracking list is now validated
-                if not self.db.is_duplicate_file(file_str):
-                    new_files.append((file.name, file_str))
-                    print(f"Debug - New file found: {file.name}")
-                else:
-                    print(f"Debug - File exists in database: {file.name}")
-                    if file_str not in self.imported_files:
-                        self.imported_files.append(file_str)
-                        self._save_imported_files()
+                try:
+                    file_str = str(file.absolute())
+                    print(f"Debug - Checking file: {file.name}")
+                    
+                    # Only check database, since tracking list is now validated
+                    if not self.db.is_duplicate_file(file_str):
+                        new_files.append((file.name, file_str))
+                        print(f"Debug - New file found: {file.name}")
+                    else:
+                        print(f"Debug - File exists in database: {file.name}")
+                        if file_str not in self.imported_files:
+                            self.imported_files.append(file_str)
+                            self._save_imported_files()
+                except (IOError, PermissionError, OSError) as e:
+                    print(f"Warning: Could not access file {file}: {e}")
+                    continue
             
             print(f"Debug - Found {len(new_files)} new files to import")
             return new_files
@@ -115,19 +140,21 @@ class ImportManager:
         """Import a single file and record it"""
         file = Path(file_path)
         if not file.exists():
-            raise Exception(f"File not found: {file_path}")
+            raise FileNotFoundError(f"File not found: {file_path}")
             
         try:
             # Check for duplicates first
             is_duplicate = self.db.is_duplicate_file(str(file))
             if is_duplicate:
-                raise Exception("This file has already been imported")
+                raise DuplicateFileError("This file has already been imported")
 
             self.db.import_csv(str(file))
             self.imported_files.append(str(file))
             self._save_imported_files()
-        except Exception as e:
-            raise Exception(f"Error importing {file.name}: {str(e)}")
+        except (IOError, PermissionError) as e:
+            raise FileImportError(f"Error accessing {file.name}: {str(e)}")
+        except Exception as e:  # Keep this to catch any database errors
+            raise FileImportError(f"Error importing {file.name}: {str(e)}")
 
 class ImportStartupDialog(QDialog):
     def __init__(self, files: List[str], parent: Optional[QDialog] = None) -> None:
@@ -206,9 +233,12 @@ def run_import_check() -> None:
                         try:
                             manager.import_file(filepath)
                             print(f"Successfully imported {filename}")
-                        except Exception as e:
+                        except (FileImportError, DuplicateFileError, FileNotFoundError) as e:
                             QMessageBox.warning(None, "Import Error", 
                                 f"Failed to import {filename}\n\nError: {str(e)}")
-    except Exception as e:
+    except (IOError, PermissionError) as e:
+        QMessageBox.critical(None, "Critical Error",
+            f"Failed to access required files:\n\n{str(e)}")
+    except ImportManagerError as e:
         QMessageBox.critical(None, "Critical Error",
             f"Failed to initialize import system:\n\n{str(e)}")
