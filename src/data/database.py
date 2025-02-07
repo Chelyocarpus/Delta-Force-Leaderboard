@@ -202,11 +202,11 @@ class Database:
                     # Consider it duplicate if:
                     # 1. Same snapshot name
                     # 2. Same number of players
-                    # 3. Similar total score (within 5% variance)
+                    # 3. Score difference is less than max of (5% of total score, 100 points)
                     # 4. At least 80% of player names match
                     if (stored_snapshot == snapshot_name and 
                         stored_count == player_count and
-                        abs(stored_score - total_score) < (total_score * 0.05)):
+                        abs(stored_score - total_score) < max(total_score * 0.05, 100)):
                         
                         # Check player overlap
                         common_players = set(players) & set(stored_players)

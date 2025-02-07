@@ -478,9 +478,10 @@ class MainWindow(QMainWindow):
             with open(file_path, newline='') as csvfile:
                 csvreader = csv.reader(csvfile)
                 next(csvreader)  # Skip header
-                if not (rows := list(csvreader)):
+                rows = list(csvreader)
+                if not rows:
                     return False
-                    
+                
                 is_duplicate, _ = self.db.check_duplicate_data(rows)
                 return not is_duplicate
         except Exception as e:

@@ -306,7 +306,7 @@ class SnapshotViewerDialog(QDialog):
                     QMessageBox.information(self, "Success", 
                         "Database has been purged successfully.\nA backup was created before purging.")
                 else:
-                    raise Exception("Database purge operation failed")
+                    raise RuntimeError("Database purge operation failed")
                     
             except sqlite3.OperationalError as e:
                 QMessageBox.critical(self, "Database Error", 
