@@ -47,20 +47,19 @@ class DefenderTab(QWidget):
         layout = QHBoxLayout()
         layout.setContentsMargins(5, 5, 5, 5)
 
-        # Create pie chart for K/D ratio visualization
         self.efficiency_series = QPieSeries()
         kills_slice = self.efficiency_series.append("Kills", 0)
         deaths_slice = self.efficiency_series.append("Deaths", 0)
 
         # Style slices
+        for pie_slice in self.efficiency_series.slices():
+            pie_slice.setLabelVisible(True)
+            pie_slice.setExploded(True)
+            pie_slice.setExplodeDistanceFactor(0.1)
+            pie_slice.setLabelPosition(QPieSlice.LabelOutside)
+
         kills_slice.setBrush(QColor(100, 200, 100))
         deaths_slice.setBrush(QColor(200, 100, 100))
-        
-        for slice in self.efficiency_series.slices():
-            slice.setLabelVisible(True)
-            slice.setExploded(True)
-            slice.setExplodeDistanceFactor(0.1)
-            slice.setLabelPosition(QPieSlice.LabelOutside)
 
         chart = QChart()
         chart.addSeries(self.efficiency_series)
@@ -158,82 +157,96 @@ class DefenderTab(QWidget):
             maps = [row[0] for row in cursor.fetchall()]
             self.map_combo.addItems(maps)
 
+    def format_stat_value(self, value, key):
+        if value is None:
+            return "--"
+        
+        if isinstance(value, (int, float)):
+            return (
+                f"{value:.2f}" if key.endswith(('rate')) or key == 'kd_ratio'
+                else f"{int(value):,}"
+            )
+        return str(value)
+
+    def get_stats_query(self, map_name):
+        map_filter = "AND map = ?" if map_name and map_name != "All Maps" else ""
+        query_params = [self.player_name]
+        if map_filter:
+            query_params.append(map_name)
+            
+        query = f"""
+            WITH defender_stats AS (
+                SELECT * FROM matches 
+                WHERE name = ? 
+                AND LOWER(team) = LOWER('Defense')
+                {map_filter}
+            )
+            SELECT 
+                SUM(kills) as kills_total,
+                ROUND(AVG(kills), 1) as kills_avg,
+                MAX(kills) as kills_best,
+                SUM(deaths) as deaths_total,
+                ROUND(AVG(deaths), 1) as deaths_avg,
+                ROUND(CAST(SUM(kills) AS FLOAT) / NULLIF(SUM(deaths), 0), 2) as kd_ratio,
+                SUM(COALESCE(vehicle_damage, 0)) as vehicle_damage_total,
+                ROUND(AVG(COALESCE(vehicle_damage, 0)), 1) as vehicle_damage_avg,
+                COUNT(*) as games_total,
+                SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) as victories,
+                ROUND(SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as win_rate,
+                ROUND(AVG(CAST(rank AS FLOAT)), 1) as avg_rank,
+                SUM(score) as score_total,
+                ROUND(AVG(score), 1) as score_avg,
+                MAX(score) as score_best,
+                SUM(assists) as assists_total,
+                ROUND(AVG(assists), 1) as assists_avg,
+                SUM(revives) as revives_total,
+                ROUND(AVG(revives), 1) as revives_avg,
+                SUM(COALESCE(tactical_respawn, 0)) as tactical_respawn_total,
+                ROUND(AVG(COALESCE(tactical_respawn, 0)), 1) as tactical_respawn_avg,
+                SUM(captures) as captures_total,
+                ROUND(AVG(captures), 1) as captures_avg,
+                MAX(captures) as captures_best,
+                SUM(kills) as total_k,
+                SUM(deaths) as total_d
+            FROM defender_stats
+        """
+        return query, query_params
+
+    def update_chart(self, kills, deaths):
+        for idx, (value, label) in enumerate([
+            (kills, f"Kills ({kills or 0})"),
+            (deaths, f"Deaths ({deaths or 0})")
+        ]):
+            pie_slice = self.efficiency_series.slices()[idx]
+            pie_slice.setValue(value)
+            pie_slice.setLabel(label)
+
+    def update_stat_labels(self, stats):
+        column_names = list(self.stat_labels.keys())
+        for i, key in enumerate(column_names):
+            value = self.format_stat_value(stats[i], key)
+            value += "%" if key.endswith('rate') else ""
+            self.stat_labels[key].setText(value)
+
     def update_stats(self, map_name=None):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            
-            map_filter = "AND map = ?" if map_name and map_name != "All Maps" else ""
-            query_params = [self.player_name]
-            if map_filter:
-                query_params.append(map_name)
-
-            # Add debug logging
-            logger.debug(f"Executing query for player: {self.player_name}")
-            logger.debug(f"Map filter: {map_filter}")
-
-            cursor.execute(f"""
-                WITH defender_stats AS (
-                    SELECT * FROM matches 
-                    WHERE name = ? 
-                    AND LOWER(team) = LOWER('Defense')
-                    {map_filter}
-                )
-                SELECT 
-                    SUM(kills) as kills_total,
-                    ROUND(AVG(kills), 1) as kills_avg,
-                    MAX(kills) as kills_best,
-                    SUM(deaths) as deaths_total,
-                    ROUND(AVG(deaths), 1) as deaths_avg,
-                    ROUND(CAST(SUM(kills) AS FLOAT) / NULLIF(SUM(deaths), 0), 2) as kd_ratio,
-                    SUM(COALESCE(vehicle_damage, 0)) as vehicle_damage_total,
-                    ROUND(AVG(COALESCE(vehicle_damage, 0)), 1) as vehicle_damage_avg,
-                    COUNT(*) as games_total,
-                    SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) as victories,
-                    ROUND(SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 1) as win_rate,
-                    ROUND(AVG(CAST(rank AS FLOAT)), 1) as avg_rank,
-                    SUM(score) as score_total,
-                    ROUND(AVG(score), 1) as score_avg,
-                    MAX(score) as score_best,
-                    SUM(assists) as assists_total,
-                    ROUND(AVG(assists), 1) as assists_avg,
-                    SUM(revives) as revives_total,
-                    ROUND(AVG(revives), 1) as revives_avg,
-                    SUM(COALESCE(tactical_respawn, 0)) as tactical_respawn_total,
-                    ROUND(AVG(COALESCE(tactical_respawn, 0)), 1) as tactical_respawn_avg,
-                    SUM(captures) as captures_total,
-                    ROUND(AVG(captures), 1) as captures_avg,
-                    MAX(captures) as captures_best,
-                    SUM(kills) as total_k,
-                    SUM(deaths) as total_d
-                FROM defender_stats
-            """, query_params)
-            
-            stats = cursor.fetchone()
-            
-            if stats:
-                # Add debug logging for K/D ratio
-                logger.debug(f"K/D Ratio value from query: {stats[5]}")  # Index 5 corresponds to kd_ratio in query
-
-                # Update efficiency chart with kills/deaths
-                total_kills, total_deaths = stats[-2], stats[-1]
-                self.efficiency_series.slices()[0].setValue(total_kills or 0)
-                self.efficiency_series.slices()[1].setValue(total_deaths or 0)
-                self.efficiency_series.slices()[0].setLabel(f"Kills ({total_kills or 0})")
-                self.efficiency_series.slices()[1].setLabel(f"Deaths ({total_deaths or 0})")
+        self.setUpdatesEnabled(False)
+        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                query, params = self.get_stats_query(map_name)
                 
-                # Update stat labels
-                for i, key in enumerate(self.stat_labels.keys()):
-                    value = stats[i] if stats[i] is not None else "--"
-                    
-                    if isinstance(value, (int, float)):
-                        if key.endswith(('rate')) or key == 'kd_ratio':  # Add special handling for kd_ratio
-                            formatted_value = f"{value:.2f}"  # Use 2 decimal places for K/D ratio
-                        else:
-                            formatted_value = f"{int(value):,}"
-                    else:
-                        formatted_value = str(value)
-                        
-                    if key.endswith('rate'):
-                        formatted_value += "%"
+                logger.debug(f"Executing query for player: {self.player_name}")
+                logger.debug(f"Map filter: {map_name if map_name else 'None'}")
 
-                    self.stat_labels[key].setText(formatted_value)
+                cursor.execute(query, params)
+                if stats := cursor.fetchone():
+                    self.update_chart(stats[-2], stats[-1])
+                    self.update_stat_labels(stats)
+
+        except Exception as e:
+            logger.error(f"Error updating stats: {str(e)}")
+            raise
+        finally:
+            self.setUpdatesEnabled(True)
+            self.update()

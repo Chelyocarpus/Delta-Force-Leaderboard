@@ -239,101 +239,122 @@ class MainWindow(QMainWindow):
                 self.table.setColumnWidth(i, width)
 
     def load_data_from_db(self):
+        """Load and display data from database in the table view"""
         self.table.setSortingEnabled(False)
         self.save_column_widths()
-        self.table.setRowCount(0)  # Clear the table first
-        
-        search_text = self.search_input.text().lower()
+        self.table.setRowCount(0)
         
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # Check if table exists and has data
-                cursor.execute("SELECT COUNT(*) FROM matches")
-                if cursor.fetchone()[0] == 0:
-                    # No data available, leave table empty
-                    self.restore_column_widths()
-                    self.table.setSortingEnabled(True)
-                    return
-
-                # Use the display columns for the query
-                numeric_columns = [
-                    'score', 'kills', 'deaths', 'assists', 'revives', 'captures',
-                    'vehicle_damage', 'tactical_respawn'
-                ]
-                
-                # Build query using display_columns order
-                select_parts = []
-                for col in self.display_columns:
-                    if col == 'name':
-                        select_parts.append('"name"')  # Quote the name column
-                    elif col in numeric_columns:
-                        select_parts.append(f"""
-                            CAST(SUM(CASE 
-                                WHEN "{col}" IS NOT NULL AND "{col}" != '' 
-                                THEN CAST("{col}" AS INTEGER) 
-                                ELSE 0 
-                            END) AS INTEGER) as total_{col}
-                        """.strip())
-                    else:
-                        select_parts.append(f'MAX("{col}") as {col}')
-                
-                query = f"""
-                    SELECT {', '.join(select_parts)}
-                    FROM matches
-                    WHERE LOWER("name") LIKE ?
-                    GROUP BY "name"
-                    ORDER BY total_score DESC
-                """
-                
-                cursor.execute(query, (f'%{search_text}%',))
-                data = cursor.fetchall()
-                
-                if data:
-                    self.table.setRowCount(len(data))
-                    for row, rowData in enumerate(data):
-                        for col, value in enumerate(rowData):
-                            if col == 0 or self.display_columns[col] not in numeric_columns:
-                                item = QTableWidgetItem(str(value) if value is not None else "")
-                            else:
-                                try:
-                                    num_value = int(value) if value is not None else 0
-                                    item = NumericSortItem(num_value)
-                                except (ValueError, TypeError):
-                                    item = QTableWidgetItem(str(value))
-                                item.setTextAlignment(Qt.AlignCenter)
-                            self.table.setItem(row, col, item)
-        
+            data = self._fetch_data_from_db()
+            if data:
+                self._populate_table(data)
+            self._setup_column_display()
+            self._setup_header_tooltips()
+            
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load data: {str(e)}")
-            print(f"Database error: {str(e)}")  # Add debug output
-            return  # Return early on error
-            
-        if not self.column_widths:
-            self.table.resizeColumnsToContents()
-        else:
-            self.restore_column_widths()
+            print(f"Database error: {str(e)}")
+            return
             
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicator(1, Qt.DescendingOrder)
 
-        # Add dynamic tooltips with better type awareness and error checking
-        numeric_columns = [
+    def _fetch_data_from_db(self):
+        """Fetch aggregated player data from database"""
+        search_text = self.search_input.text().lower()
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM matches")
+            if cursor.fetchone()[0] == 0:
+                return None
+
+            query = self._build_query()
+            cursor.execute(query, (f'%{search_text}%',))
+            return cursor.fetchall()
+
+    def _build_query(self):
+        """Build the SQL query for fetching player statistics"""
+        numeric_columns = {
             'score', 'kills', 'deaths', 'assists', 'revives', 'captures',
             'vehicle_damage', 'tactical_respawn'
-        ]
+        }
         
-        # Only set tooltips if we have valid columns and headers
-        if self.display_columns:
-            for col in range(self.table.columnCount()):
-                header_item = self.table.horizontalHeaderItem(col)
-                if header_item and col < len(self.display_columns):  # Check both exist
-                    if self.display_columns[col] in numeric_columns:
-                        tooltip = f"Total {self.display_columns[col].replace('_', ' ').title()} Across All Games"
-                    else:
-                        tooltip = self.display_columns[col].replace('_', ' ').title()
-                    header_item.setToolTip(tooltip)
+        select_parts = []
+        for col in self.display_columns:
+            if col == 'name':
+                select_parts.append('"name"')
+            elif col in numeric_columns:
+                select_parts.append(self._build_numeric_column_query(col))
+            else:
+                select_parts.append(f'MAX("{col}") as {col}')
+        
+        return f"""
+            SELECT {', '.join(select_parts)}
+            FROM matches
+            WHERE LOWER("name") LIKE ?
+            GROUP BY "name"
+            ORDER BY total_score DESC
+        """
+
+    def _build_numeric_column_query(self, column):
+        """Build the SQL for a numeric column with proper casting and null handling"""
+        return f"""
+            CAST(SUM(CASE 
+                WHEN "{column}" IS NOT NULL AND "{column}" != '' 
+                THEN CAST("{column}" AS INTEGER) 
+                ELSE 0 
+            END) AS INTEGER) as total_{column}
+        """.strip()
+
+    def _populate_table(self, data):
+        """Populate the table with the fetched data"""
+        numeric_columns = {
+            'score', 'kills', 'deaths', 'assists', 'revives', 'captures',
+            'vehicle_damage', 'tactical_respawn'
+        }
+        
+        self.table.setRowCount(len(data))
+        for row, row_data in enumerate(data):
+            for col, value in enumerate(row_data):
+                if col == 0 or self.display_columns[col] not in numeric_columns:
+                    item = QTableWidgetItem(str(value) if value is not None else "")
+                else:
+                    item = self._create_numeric_item(value)
+                self.table.setItem(row, col, item)
+
+    def _create_numeric_item(self, value):
+        """Create a properly formatted numeric table item"""
+        try:
+            num_value = int(value) if value is not None else 0
+            item = NumericSortItem(num_value)
+        except (ValueError, TypeError):
+            item = QTableWidgetItem(str(value))
+        item.setTextAlignment(Qt.AlignCenter)
+        return item
+
+    def _setup_column_display(self):
+        """Setup column widths based on saved values or content"""
+        if not self.column_widths:
+            self.table.resizeColumnsToContents()
+        else:
+            self.restore_column_widths()
+
+    def _setup_header_tooltips(self):
+        """Setup tooltips for table headers"""
+        numeric_columns = {
+            'score', 'kills', 'deaths', 'assists', 'revives', 'captures',
+            'vehicle_damage', 'tactical_respawn'
+        }
+        
+        for col in range(self.table.columnCount()):
+            header_item = self.table.horizontalHeaderItem(col)
+            if header_item and col < len(self.display_columns):
+                column_name = self.display_columns[col]
+                tooltip = (f"Total {column_name.replace('_', ' ').title()} Across All Games"
+                          if column_name in numeric_columns
+                          else column_name.replace('_', ' ').title())
+                header_item.setToolTip(tooltip)
 
     def on_search(self, text):
         """Handler for search input changes"""
@@ -417,78 +438,116 @@ class MainWindow(QMainWindow):
                         f"Failed to restore database: {str(e)}")
 
     def check_for_new_files(self):
-        """Check for new CSV files in the import directory"""
-        # Create import directory if it doesn't exist
+        """Check for new CSV files in the import directory and handle their import."""
+        try:
+            if not self._ensure_import_directory():
+                return
+
+            new_files = self._find_new_files()
+            if not new_files:
+                return
+
+            self._handle_file_import(new_files)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error checking for new files: {str(e)}")
+            print(f"Error in check_for_new_files: {e}")
+
+    def _ensure_import_directory(self):
+        """Ensure import directory exists and create if necessary."""
         if not os.path.exists(IMPORT_DIR):
-            os.makedirs(IMPORT_DIR, exist_ok=True)
-            return
-
-        # Get all CSV files in the import directory using the correct path
-        csv_files = glob.glob(os.path.join(IMPORT_DIR, "*_processed.csv"))
-        if not csv_files:
-            return
-
-        new_files = []
-        for file_path in csv_files:
             try:
-                with open(file_path, newline='') as csvfile:
-                    csvreader = csv.reader(csvfile)
-                    headers = next(csvreader)  # Skip header row
-                    rows = list(csvreader)
-                    
-                    if rows:
-                        is_duplicate, _ = self.db.check_duplicate_data(rows)
-                        if not is_duplicate:
-                            new_files.append(file_path)
+                os.makedirs(IMPORT_DIR, exist_ok=True)
+                return False
             except Exception as e:
-                print(f"Error checking file {file_path}: {e}")
+                print(f"Failed to create import directory: {e}")
+                return False
+        return True
 
-        if new_files:
-            dialog = ImportStartupDialog(
-                [os.path.basename(f) for f in new_files], 
-                self
-            )
-            if dialog.exec_() == QDialog.Accepted:
-                selected_files = dialog.get_selected_files()
-                for filename in selected_files:
-                    file_path = os.path.join(IMPORT_DIR, filename)
-                    try:
-                        with open(file_path, newline='') as csvfile:
-                            csvreader = csv.reader(csvfile)
-                            headers = next(csvreader)
-                            rows = list(csvreader)
-                            
-                            if rows:
-                                first_row = rows[0]
-                                # Update automatic import to use same format
-                                snapshot_name = f"{first_row[0]} - {first_row[1]} - {first_row[2]} - {first_row[3]}"
-                                timestamp = first_row[2]
-                                
-                                self.db.import_snapshot(snapshot_name, timestamp, rows)
-                                self.statusBar().showMessage(f"Imported: {snapshot_name}", 3000)
-                    except Exception as e:
-                        QMessageBox.critical(self, "Error", 
-                            f"Failed to import {filename}: {str(e)}")
+    def _find_new_files(self):
+        """Find and validate new CSV files that haven't been imported yet."""
+        if not (csv_files := glob.glob(os.path.join(IMPORT_DIR, "*_processed.csv"))):
+            return []
+            
+        return [file_path for file_path in csv_files 
+                if self._is_valid_new_file(file_path)]
 
-                self.load_data_from_db()
+    def _is_valid_new_file(self, file_path):
+        """Check if file is valid and contains new data."""
+        try:
+            with open(file_path, newline='') as csvfile:
+                csvreader = csv.reader(csvfile)
+                next(csvreader)  # Skip header
+                rows = list(csvreader)
+                if not rows:
+                    return False
+                
+                is_duplicate, _ = self.db.check_duplicate_data(rows)
+                return not is_duplicate
+        except Exception as e:
+            print(f"Error validating file {file_path}: {e}")
+            return False
+
+    def _handle_file_import(self, new_files):
+        """Handle the import dialog and file processing."""
+        dialog = ImportStartupDialog(
+            [os.path.basename(f) for f in new_files],
+            self
+        )
+        
+        if dialog.exec_() == QDialog.Accepted:
+            self._process_selected_files(dialog.get_selected_files(), new_files)
+
+    def _process_selected_files(self, selected_filenames, new_files):
+        """Process the selected files and import them into the database."""
+        for filename in selected_filenames:
+            file_path = os.path.join(IMPORT_DIR, filename)
+            try:
+                self._import_single_file(file_path)
+            except Exception as e:
+                QMessageBox.critical(self, "Error", 
+                    f"Failed to import {filename}: {str(e)}")
+        
+        self.load_data_from_db()
+
+    def _import_single_file(self, file_path):
+        """Import a single CSV file into the database."""
+        with open(file_path, newline='') as csvfile:
+            csvreader = csv.reader(csvfile)
+            next(csvreader)  # Skip header
+            rows = list(csvreader)
+            
+            if rows:
+                first_row = rows[0]
+                snapshot_name = f"{first_row[0]} - {first_row[1]} - {first_row[2]} - {first_row[3]}"
+                timestamp = first_row[2]
+                
+                self.db.import_snapshot(snapshot_name, timestamp, rows)
+                self.statusBar().showMessage(f"Imported: {snapshot_name}", 3000)
 
     def check_new_files_on_startup(self):
-        new_files = self.import_manager.check_new_files()
-        if new_files:
-            dialog = ImportStartupDialog([f[0] for f in new_files], self)
-            if dialog.exec_() == QDialog.Accepted:
-                selected_files = dialog.get_selected_files()
-                for filename in selected_files:
-                    # Find matching filepath from new_files tuple
-                    matching_file = next((f[1] for f in new_files if f[0] == filename), None)
-                    if matching_file:
-                        if self.db.import_csv(matching_file):
-                            self.statusBar().showMessage(f"Imported: {filename}", 3000)
-                        else:
-                            QMessageBox.critical(self, "Error", 
-                                f"Failed to import {filename}")
+        """Check for new files on application startup."""
+        if not (new_files := self.import_manager.check_new_files()):
+            return
+            
+        dialog = ImportStartupDialog([f[0] for f in new_files], self)
+        if not dialog.exec_() == QDialog.Accepted:
+            return
+            
+        self._process_startup_files(dialog.get_selected_files(), new_files)
+
+    def _process_startup_files(self, selected_files, new_files):
+        """Process files selected during startup."""
+        for filename in selected_files:
+            if not (matching_file := next((f[1] for f in new_files if f[0] == filename), None)):
+                continue
                 
-                self.load_data_from_db()
+            if self.db.import_csv(matching_file):
+                self.statusBar().showMessage(f"Imported: {filename}", 3000)
+            else:
+                QMessageBox.critical(self, "Error", f"Failed to import {filename}")
+        
+        self.load_data_from_db()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

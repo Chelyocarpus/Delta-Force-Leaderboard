@@ -165,6 +165,9 @@ class AttackerTab(QWidget):
             self.map_combo.addItems(maps)
 
     def update_stats(self, map_name=None):
+        # Disable UI updates temporarily
+        self.setUpdatesEnabled(False)
+        
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
@@ -230,21 +233,15 @@ class AttackerTab(QWidget):
             stats = cursor.fetchone()
             
             if stats:
-                # Update efficiency chart
-                total_kills, total_deaths = stats[-2], stats[-1]
-                self.efficiency_series.slices()[0].setValue(total_kills or 0)
-                self.efficiency_series.slices()[1].setValue(total_deaths or 0)
-                self.efficiency_series.slices()[0].setLabel(f"Kills ({total_kills or 0})")
-                self.efficiency_series.slices()[1].setLabel(f"Deaths ({total_deaths or 0})")
-                
-                # Update stat labels
+                # Collect all stats updates first
+                stat_updates = {}
                 for i, key in enumerate(self.stat_labels.keys()):
                     value = stats[i] if stats[i] is not None else "--"
                     
                     if isinstance(value, (int, float)):
                         if key == "win_rate":
                             formatted_value = f"{value:.1f}"
-                        elif key in ["kd_ratio", "tickets_ratio"]:  # Added tickets_ratio to 2 decimal format
+                        elif key in ["kd_ratio", "tickets_ratio"]:
                             formatted_value = f"{value:.2f}"
                         else:
                             formatted_value = f"{int(value):,}"
@@ -254,7 +251,21 @@ class AttackerTab(QWidget):
                     if key == "win_rate":
                         formatted_value += "%"
                         
-                    self.stat_labels[key].setText(formatted_value)
+                    stat_updates[key] = formatted_value
+
+                # Apply all stat updates at once
+                for key, value in stat_updates.items():
+                    self.stat_labels[key].setText(value)
+
+                # Update chart values
+                total_kills, total_deaths = stats[-2], stats[-1]
+                self.efficiency_series.slices()[0].setValue(total_kills or 0)
+                self.efficiency_series.slices()[1].setValue(total_deaths or 0)
+                self.efficiency_series.slices()[0].setLabel(f"Kills ({total_kills or 0})")
+                self.efficiency_series.slices()[1].setLabel(f"Deaths ({total_deaths or 0})")
+
+        # Re-enable UI updates
+        self.setUpdatesEnabled(True)
 
 def setup_attacker_tab(dialog):
     dialog.attacker_tab = AttackerTab(dialog, dialog.player_name, dialog.parent.db.db_path)
