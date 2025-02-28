@@ -135,7 +135,7 @@ class UpdateDownloader(QThread):
     def _download_file(self, url, destination):
         """Download file with progress updates."""
         try:
-            response = requests.get(url, stream=True)
+            response = requests.get(url, stream=True, timeout=60)
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
