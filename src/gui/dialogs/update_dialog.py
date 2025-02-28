@@ -177,8 +177,7 @@ class UpdateDialog(QDialog):
                     if sys.platform.startswith('win'):
                         # Use subprocess.Popen to avoid waiting
                         subprocess.Popen(['cmd', '/c', install_script], 
-                                        shell=True, 
-                                        creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                        shell=False, creationflags=subprocess.CREATE_NEW_CONSOLE)
                     else:
                         # Unix platforms
                         subprocess.Popen(['bash', install_script])
