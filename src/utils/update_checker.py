@@ -1,10 +1,10 @@
-import requests
 import json
 import re
 import os
 import time
 from packaging import version
 from src.utils.constants import ROOT_DIR, APP_VERSION
+from security import safe_requests
 
 class UpdateChecker:
     def __init__(self, current_version, repo_owner="Chelyocarpus", repo_name="Delta-Force-Leaderboard"):
@@ -35,7 +35,7 @@ class UpdateChecker:
                     return cached_data
             
             # If no cache or force check, get from GitHub API
-            response = requests.get(self.api_url, timeout=5)
+            response = safe_requests.get(self.api_url, timeout=5)
             response.raise_for_status()
             
             release_data = json.loads(response.text)

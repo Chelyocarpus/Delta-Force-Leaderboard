@@ -6,11 +6,11 @@ import subprocess
 import platform
 import shutil
 import time
-import requests
 from zipfile import ZipFile
 from PyQt5.QtWidgets import QMessageBox
 from PyQt5.QtCore import QThread, pyqtSignal, QObject
 from src.utils.constants import ROOT_DIR
+from security import safe_requests
 
 class DownloadProgressSignals(QObject):
     """Signals for the download progress."""
@@ -135,7 +135,7 @@ class UpdateDownloader(QThread):
     def _download_file(self, url, destination):
         """Download file with progress updates."""
         try:
-            response = requests.get(url, stream=True, timeout=60)
+            response = safe_requests.get(url, stream=True, timeout=60)
             response.raise_for_status()
             
             total_size = int(response.headers.get('content-length', 0))
