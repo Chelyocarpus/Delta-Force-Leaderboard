@@ -29,10 +29,8 @@ class UpdateChecker:
         """
         try:
             # Try to use cached data first if not forcing a check
-            if not force_check:
-                cached_data = self._get_cached_data()
-                if cached_data:
-                    return cached_data
+            if not force_check and (cached_data := self._get_cached_data()):
+                return cached_data
             
             # If no cache or force check, get from GitHub API
             response = safe_requests.get(self.api_url, timeout=5)
@@ -74,7 +72,7 @@ class UpdateChecker:
                         # This is a last resort - we'll assume no update if the versions don't match
                         # but string comparison fails
                         is_update_available = False
-                        print(f"Version comparison failed, assuming no update needed")
+                        print("Version comparison failed, assuming no update needed")
             
             # Final safety check
             if latest_version_tag == self.current_version:
@@ -82,6 +80,7 @@ class UpdateChecker:
                 is_update_available = False
             
             # Prepare the result
+            result = None
             if is_update_available:
                 download_url = release_data.get("html_url", "")
                 release_notes = release_data.get("body", "No release notes available")
@@ -98,8 +97,7 @@ class UpdateChecker:
             print(f"Failed to check for updates: {e}")
             
             # If online check fails, try to use cache regardless of force_check
-            cached_data = self._get_cached_data()
-            if cached_data:
+            if cached_data := self._get_cached_data():
                 return cached_data
                 
             return (False, "", "", f"Error checking for updates: {e}")

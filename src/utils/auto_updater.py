@@ -93,24 +93,21 @@ class UpdateDownloader(QThread):
                 # If we have the full API response in cache, use it to get asset URLs
                 if 'full_api_response' in cache_data:
                     response_data = cache_data['full_api_response']
-                    assets = response_data.get('assets', [])
-                    
-                    if assets:
-                        # Find the .zip asset
+             
+                    # Find the .zip asset using walrus operator
+                    if assets := response_data.get('assets', []):
                         for asset in assets:
                             if asset['name'].endswith('.zip'):
                                 return asset['browser_download_url']
                     
                     # If no asset was found but we have a tag name, use source download
                     tag = response_data.get('tag_name', 'latest')
-                    if 'url' in response_data:
-                        html_url = response_data.get('html_url', '')
-                        if html_url:
-                            parts = html_url.split('/')
-                            if len(parts) >= 5:  # Minimum to extract owner/repo
-                                repo_owner = parts[3]
-                                repo_name = parts[4]
-                                return f"https://github.com/{repo_owner}/{repo_name}/archive/{tag}.zip"
+                    if html_url := response_data.get('html_url', ''):
+                        parts = html_url.split('/')
+                        if len(parts) >= 5:  # Minimum to extract owner/repo
+                            repo_owner = parts[3]
+                            repo_name = parts[4]
+                            return f"https://github.com/{repo_owner}/{repo_name}/archive/{tag}.zip"
                                 
             # If we got here, we couldn't find a URL in the cache
             return None
@@ -150,8 +147,11 @@ class UpdateDownloader(QThread):
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)
-                        progress = int((downloaded / total_size) * 100) if total_size > 0 else -1
-                        self.signals.progress.emit(progress)
+                        # Using walrus operator to simplify progress calculation
+                        if total_size > 0 and (progress := int((downloaded / total_size) * 100)):
+                            self.signals.progress.emit(progress)
+                        else:
+                            self.signals.progress.emit(-1)
         
         except Exception as e:
             self.signals.error.emit(f"Download failed: {str(e)}")
@@ -188,26 +188,26 @@ class UpdateDownloader(QThread):
             if platform.system() == "Windows":
                 install_script = os.path.join(self.temp_dir, "install_update.bat")
                 with open(install_script, 'w') as f:
-                    f.write(f'@echo off\n')
-                    f.write(f'echo Waiting for application to close...\n')
-                    f.write(f'ping 127.0.0.1 -n 3 > nul\n')  # Wait 3 seconds
-                    f.write(f'echo Installing update...\n')
+                    f.write('@echo off\n')
+                    f.write('echo Waiting for application to close...\n')
+                    f.write('ping 127.0.0.1 -n 3 > nul\n')  # Wait 3 seconds
+                    f.write('echo Installing update...\n')
                     
                     # Copy all files from extracted directory to app directory
                     f.write(f'xcopy /E /Y "{self.extracted_dir}\\*" "{app_dir}\\"\n')
                     
                     # Restart the application
-                    f.write(f'echo Update complete, restarting application...\n')
+                    f.write('echo Update complete, restarting application...\n')
                     f.write(f'start "" "{current_exe}"\n')
-                    f.write(f'exit\n')
+                    f.write('exit\n')
             
             elif platform.system() == "Darwin":  # macOS
                 install_script = os.path.join(self.temp_dir, "install_update.sh")
                 with open(install_script, 'w') as f:
-                    f.write(f'#!/bin/bash\n')
-                    f.write(f'echo "Waiting for application to close..."\n')
-                    f.write(f'sleep 3\n')
-                    f.write(f'echo "Installing update..."\n')
+                    f.write('#!/bin/bash\n')
+                    f.write('echo "Waiting for application to close..."\n')
+                    f.write('sleep 3\n')
+                    f.write('echo "Installing update..."\n')
                     
                     # Copy all files from extracted directory to app directory
                     f.write(f'cp -R "{self.extracted_dir}/"* "{app_dir}/"\n')
@@ -216,7 +216,7 @@ class UpdateDownloader(QThread):
                     f.write(f'chmod +x "{current_exe}"\n')
                     
                     # Restart the application
-                    f.write(f'echo "Update complete, restarting application..."\n')
+                    f.write('echo "Update complete, restarting application..."\n')
                     f.write(f'open "{current_exe}"\n')
                 
                 # Make the script executable
@@ -225,10 +225,10 @@ class UpdateDownloader(QThread):
             else:  # Linux
                 install_script = os.path.join(self.temp_dir, "install_update.sh")
                 with open(install_script, 'w') as f:
-                    f.write(f'#!/bin/bash\n')
-                    f.write(f'echo "Waiting for application to close..."\n')
-                    f.write(f'sleep 3\n')
-                    f.write(f'echo "Installing update..."\n')
+                    f.write('#!/bin/bash\n')
+                    f.write('echo "Waiting for application to close..."\n')
+                    f.write('sleep 3\n')
+                    f.write('echo "Installing update..."\n')
                     
                     # Copy all files from extracted directory to app directory
                     f.write(f'cp -R "{self.extracted_dir}/"* "{app_dir}/"\n')
@@ -237,7 +237,7 @@ class UpdateDownloader(QThread):
                     f.write(f'chmod +x "{current_exe}"\n')
                     
                     # Restart the application
-                    f.write(f'echo "Update complete, restarting application..."\n')
+                    f.write('echo "Update complete, restarting application..."\n')
                     f.write(f'"{current_exe}" &\n')
                 
                 # Make the script executable
@@ -254,7 +254,7 @@ class UpdateDownloader(QThread):
         try:
             if os.path.exists(self.temp_dir):
                 shutil.rmtree(self.temp_dir, ignore_errors=True)
-        except:
+        except Exception:
             pass  # Ignore cleanup errors
 
     def cancel(self):

@@ -75,7 +75,7 @@ class UpdateDialog(QDialog):
         # Buttons for actions
         self.button_layout = QHBoxLayout()
         
-        self.download_button = QPushButton("Download && Install")
+        self.download_button = QPushButton("Download & Install")
         self.download_button.clicked.connect(self.download_and_install)
         
         self.browser_button = QPushButton("Open in Browser")
@@ -107,25 +107,69 @@ class UpdateDialog(QDialog):
         
         # Handle GitMoji codes - convert to actual emoji
         gitmoji_mapping = {
-            ":sparkles:": "✨", ":bug:": "🐛", ":memo:": "📝", ":rocket:": "🚀",
-            ":art:": "🎨", ":zap:": "⚡️", ":fire:": "🔥", ":ambulance:": "🚑",
-            ":books:": "📚", ":hammer:": "🔨", ":wrench:": "🔧", ":tada:": "🎉",
-            ":lock:": "🔒", ":bookmark:": "🔖", ":rotating_light:": "🚨",
-            ":construction:": "🚧", ":green_heart": "💚", ":arrow_down:": "⬇️",
-            ":arrow_up:": "⬆️", ":pushpin:": "📌", ":construction_worker:": "👷",
-            ":chart_with_upwards_trend:": "📈", ":recycle:": "♻️", ":heavy_plus_sign:": "➕",
-            ":heavy_minus_sign:": "➖", ":wrench:": "🔧", ":globe_with_meridians:": "🌐",
-            ":pencil2:": "✏️", ":hankey:": "💩", ":rewind:": "⏪", ":twisted_rightwards_arrows:": "🔀",
-            ":package:": "📦", ":alien:": "👽", ":truck:": "🚚", ":page_facing_up:": "📄",
-            ":boom:": "💥", ":bento:": "🍱", ":wheelchair:": "♿️", ":bulb:": "💡",
-            ":beers:": "🍻", ":speech_balloon:": "💬", ":card_file_box:": "🗃️",
-            ":loud_sound:": "🔊", ":mute:": "🔇", ":busts_in_silhouette:": "👥",
-            ":children_crossing:": "🚸", ":iphone:": "📱", ":clown_face:": "🤡",
-            ":egg:": "🥚", ":see_no_evil:": "🙈", ":camera_flash:": "📸",
-            ":alembic:": "⚗️", ":mag:": "🔍", ":label:": "🏷️", ":seedling:": "🌱",
-            ":triangular_flag_on_post:": "🚩", ":goal_net:": "🥅", ":dizzy:": "💫",
-            ":wastebasket:": "🗑️", ":passport_control:": "🛂", ":adhesive_bandage:": "🩹",
-            ":necktie:": "👔", ":stethoscope:": "🩺", ":technologist:": "🧑‍💻"
+            ":sparkles:": "✨", 
+            ":bug:": "🐛", 
+            ":memo:": "📝", 
+            ":rocket:": "🚀",
+            ":art:": "🎨", 
+            ":zap:": "⚡️", 
+            ":fire:": "🔥", 
+            ":ambulance:": "🚑",
+            ":books:": "📚", 
+            ":hammer:": "🔨", 
+            ":wrench:": "🔧", 
+            ":tada:": "🎉",
+            ":lock:": "🔒", 
+            ":bookmark:": "🔖", 
+            ":rotating_light:": "🚨",
+            ":construction:": "🚧", 
+            ":green_heart:": "💚", 
+            ":arrow_down:": "⬇️",
+            ":arrow_up:": "⬆️", 
+            ":pushpin:": "📌", 
+            ":construction_worker:": "👷",
+            ":chart_with_upwards_trend:": "📈", 
+            ":recycle:": "♻️", 
+            ":heavy_plus_sign:": "➕",
+            ":heavy_minus_sign:": "➖", 
+            ":globe_with_meridians:": "🌐",
+            ":pencil2:": "✏️", 
+            ":hankey:": "💩", 
+            ":rewind:": "⏪", 
+            ":twisted_rightwards_arrows": "🔀",
+            ":package:": "📦", 
+            ":alien:": "👽", 
+            ":truck:": "🚚", 
+            ":page_facing_up:": "📄",
+            ":boom:": "💥", 
+            ":bento:": "🍱", 
+            ":wheelchair:": "♿️", 
+            ":bulb:": "💡",
+            ":beers:": "🍻", 
+            ":speech_balloon:": "💬", 
+            ":card_file_box:": "🗃️",
+            ":loud_sound:": "🔊", 
+            ":mute:": "🔇", 
+            ":busts_in_silhouette:": "👥",
+            ":children_crossing:": "🚸", 
+            ":iphone:": "📱", 
+            ":clown_face:": "🤡",
+            ":egg:": "🥚", 
+            ":see_no_evil:": "🙈", 
+            ":camera_flash:": "📸",
+            ":alembic:": "⚗️", 
+            ":mag:": "🔍", 
+            ":label:": "🏷️", 
+            ":seedling:": "🌱",
+            ":triangular_flag_on_post:": "🚩", 
+            ":goal_net:": "🥅", 
+            ":dizzy:": "💫",
+            ":wastebasket:": "🗑️", 
+            ":passport_control:": "🛂", 
+            ":adhesive_bandage:": "🩹",
+            ":necktie:": "👔", 
+            ":stethoscope:": "🩺", 
+            ":technologist:": "🧑‍💻"
         }
         
         for code, emoji in gitmoji_mapping.items():
@@ -170,36 +214,36 @@ class UpdateDialog(QDialog):
             QMessageBox.Yes | QMessageBox.No
         )
         
-        if reply == QMessageBox.Yes:
+        if reply == QMessageBox.No:
+            # Reset the UI if user cancels
+            self.reset_ui()
+        else:
             try:
                 # Run the installation script
-                if os.path.exists(install_script):
-                    if sys.platform.startswith('win'):
-                        # Use subprocess.Popen to avoid waiting
-                        subprocess.Popen(['cmd', '/c', install_script], 
-                                        shell=False, creationflags=subprocess.CREATE_NEW_CONSOLE)
-                    else:
-                        # Unix platforms
-                        subprocess.Popen(['bash', install_script])
-                    
-                    # Accept and close the application to allow the update to proceed
-                    self.accept()
-                    if self.parent:
-                        self.parent.close()
-                    else:
-                        # Fixed: Use QApplication instance to quit
-                        QApplication.instance().quit()
-                else:
+                if not os.path.exists(install_script):
                     raise FileNotFoundError(f"Installation script not found: {install_script}")
+                
+                # Use subprocess.Popen to avoid waiting
+                if sys.platform.startswith('win'):
+                    subprocess.Popen(['cmd', '/c', install_script], 
+                                   shell=False, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                else:
+                    # Unix platforms
+                    subprocess.Popen(['bash', install_script])
+                
+                # Accept and close the application to allow the update to proceed
+                self.accept()
+                if self.parent:
+                    self.parent.close()
+                else:
+                    # Fixed: Use QApplication instance to quit
+                    QApplication.instance().quit()
             
             except Exception as e:
                 QMessageBox.critical(
                     self, "Installation Error", 
                     f"Failed to start the installation: {str(e)}"
                 )
-        else:
-            # Reset the UI if user cancels
-            self.reset_ui()
     
     def handle_error(self, error_message):
         """Handle download or installation errors."""
