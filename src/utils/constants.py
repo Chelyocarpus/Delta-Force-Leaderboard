@@ -14,6 +14,9 @@ MAIN_WINDOW_SIZE = (1000, 600)
 # Application settings
 APP_TITLE = 'Delta Force Leaderboard'
 
+# Application version - ensure this is consistent with GitHub releases (with 'v' prefix)
+APP_VERSION = "v1.1.1"  # Make sure this matches exactly how it appears in GitHub releases
+
 # Table column headers
 MAIN_TABLE_COLUMNS = [
     "Name", "Score", "Kills", "Deaths", 

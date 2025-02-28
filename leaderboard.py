@@ -5,16 +5,31 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QSettings, QTimer
 from PyQt5.QtGui import QIcon
-import csv, sqlite3, os
+import csv, sqlite3, os, shutil  # Added shutil import here
+
+try:
+    import markdown
+except ImportError:
+    print("Markdown package not found. Release notes will be displayed as plain text.")
+    # Create a dummy markdown module to prevent errors
+    class DummyMarkdown:
+        @staticmethod
+        def markdown(text, **kwargs):
+            return f"<pre>{text}</pre>"
+    markdown = DummyMarkdown()
 
 from src.data.database import Database
 from src.data.medals import MedalProcessor
 from src.gui.dialogs.snapshot_viewer import SnapshotViewerDialog
 from src.gui.dialogs.player_details import PlayerDetailsDialog
 from src.gui.widgets.numeric_sort import NumericSortItem
+from src.gui.dialogs.update_dialog import UpdateDialog
 
 from src.utils.constants import RESOURCES_DIR
 from src.utils.constants import IMPORT_DIR
+from src.utils.constants import APP_VERSION
+from src.utils.constants import ROOT_DIR  # Added ROOT_DIR import
+from src.utils.update_checker import UpdateChecker
 import glob
 from src.gui.dialogs.import_on_startup import ImportManager, ImportStartupDialog
 
@@ -23,7 +38,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         # Add this near the start of __init__
         self.current_snapshot = None
-        self.setWindowTitle("Leaderboard")
+        self.setWindowTitle(f"Leaderboard {APP_VERSION}")
         self.setGeometry(100, 100, 1000, 600)
         self.settings = QSettings('DeltaForce', 'Leaderboard')
         
@@ -65,12 +80,15 @@ class MainWindow(QMainWindow):
         self.load_data_from_db()
         
         # Setup other components
-
         self.setup_auto_backup()
         self.setup_import_manager()
         
-        # Add this line at the end of __init__
+        # Check for new files on startup
         QTimer.singleShot(0, self.check_new_files_on_startup)
+        
+        # Check for updates if enabled, but use a slightly longer delay
+        if self.settings.value('check_updates_on_startup', True, type=bool):
+            QTimer.singleShot(2000, lambda: self.check_for_updates(manual_check=False, force_check=True))
 
     def setup_auto_backup(self):
         """Setup automatic backup timer"""
@@ -201,6 +219,32 @@ class MainWindow(QMainWindow):
         restore_action = QAction("Restore Backup", self)
         restore_action.triggered.connect(self.restore_from_backup)
         backup_menu.addAction(restore_action)
+        
+        # Add Help menu with update options
+        help_menu = menubar.addMenu("Help")
+        
+        check_updates_action = QAction("Check for Updates", self)
+        check_updates_action.triggered.connect(lambda: self.check_for_updates(True))
+        help_menu.addAction(check_updates_action)
+        
+        # Add about action
+        about_action = QAction("About", self)
+        about_action.triggered.connect(self.show_about_dialog)
+        help_menu.addAction(about_action)
+        
+        # Add update settings submenu
+        update_settings_menu = help_menu.addMenu("Update Settings")
+        
+        self.auto_update_action = QAction("Check for Updates on Startup", self)
+        self.auto_update_action.setCheckable(True)
+        self.auto_update_action.setChecked(self.settings.value('check_updates_on_startup', True, type=bool))
+        self.auto_update_action.triggered.connect(self.toggle_auto_updates)
+        update_settings_menu.addAction(self.auto_update_action)
+        
+        # Add cache cleanup action
+        clear_cache_action = QAction("Clear Update Cache", self)
+        clear_cache_action.triggered.connect(self.clear_update_cache)
+        update_settings_menu.addAction(clear_cache_action)
 
     def export_stats(self):
         file_name, _ = QFileDialog.getSaveFileName(
@@ -548,6 +592,76 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", f"Failed to import {filename}")
         
         self.load_data_from_db()
+
+    def check_for_updates(self, manual_check=False, force_check=False):
+        """Check for application updates from GitHub"""
+        try:
+            # Always force check for both manual checks and startup checks
+            update_checker = UpdateChecker(APP_VERSION)
+            print(f"Checking for updates (manual={manual_check}, force={force_check})...")
+            is_update_available, latest_version, download_url, release_notes = update_checker.check_for_updates(
+                force_check=True  # Always force check to avoid caching issues
+            )
+            
+            # Extra safety check - if versions match exactly, never suggest an update
+            if is_update_available and latest_version.strip() == APP_VERSION.strip():
+                print("WARNING: Update checker incorrectly reported update needed.")
+                print(f"Current: '{APP_VERSION}', Latest: '{latest_version}'")
+                print("Forcing is_update_available to False")
+                is_update_available = False
+            
+            if is_update_available:
+                print(f"Update available: current={APP_VERSION}, latest={latest_version}")
+                dialog = UpdateDialog(latest_version, APP_VERSION, download_url, release_notes, self)
+                dialog.exec_()
+                if dialog.should_disable_updates():
+                    self.settings.setValue('check_updates_on_startup', False)
+                    self.auto_update_action.setChecked(False)
+            elif manual_check:  # Only show "no updates" message for manual checks
+                QMessageBox.information(self, "No Updates", 
+                    f"You're running the latest version ({APP_VERSION}).")
+                
+        except Exception as e:
+            if manual_check:  # Only show error message for manual checks
+                QMessageBox.warning(self, "Update Check Failed", 
+                    f"Failed to check for updates: {str(e)}")
+            print(f"Update check error: {str(e)}")
+
+    def toggle_auto_updates(self, enabled):
+        """Toggle automatic update checks"""
+        self.settings.setValue('check_updates_on_startup', enabled)
+
+    def clear_update_cache(self):
+        """Clear cached update files."""
+        cache_dir = os.path.join(ROOT_DIR, "cache")
+        if os.path.exists(cache_dir):
+            reply = QMessageBox.question(self, 'Clear Update Cache',
+                'This will delete all cached updates. Continue?',
+                QMessageBox.Yes | QMessageBox.No)
+            
+            if reply == QMessageBox.Yes:
+                try:
+                    for filename in os.listdir(cache_dir):
+                        file_path = os.path.join(cache_dir, filename)
+                        try:
+                            if os.path.isfile(file_path):
+                                os.unlink(file_path)
+                            elif os.path.isdir(file_path):
+                                shutil.rmtree(file_path)
+                        except Exception as e:
+                            print(f"Error deleting {file_path}: {e}")
+                    QMessageBox.information(self, "Success", "Update cache cleared successfully.")
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Failed to clear cache: {str(e)}")
+            else:
+                QMessageBox.information(self, "Info", "No update cache found.")
+
+    def show_about_dialog(self):
+        """Show application about dialog"""
+        QMessageBox.about(self, "About Delta Force Leaderboard",
+            f"<h2>Delta Force Leaderboard</h2>"
+            f"<p>Version: {APP_VERSION}</p>"
+            f"<p>A tool for tracking player performance in Delta Force games.</p>")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
