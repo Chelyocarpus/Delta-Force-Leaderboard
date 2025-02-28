@@ -8,3 +8,4 @@ leaderboard.db
 *.db-shm
 *.db-wal
 imported_files.json
+/cache
