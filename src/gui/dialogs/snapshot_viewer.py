@@ -1,10 +1,11 @@
 import sqlite3
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, 
                            QTableWidgetItem, QPushButton, QLineEdit, QLabel,
-                           QHeaderView, QMessageBox, QComboBox, QApplication)
+                           QHeaderView, QMessageBox, QComboBox, QApplication, QMenu)
 from PyQt5.QtCore import Qt
 from .match_details import MatchDetailsDialog
 from .purge_confirm import PurgeConfirmDialog
+from .edit_snapshot import EditSnapshotDialog
 
 class SnapshotViewerDialog(QDialog):
     def __init__(self, parent=None):
@@ -51,6 +52,10 @@ class SnapshotViewerDialog(QDialog):
             header.setSectionResizeMode(i, QHeaderView.Stretch)
         
         layout.addWidget(self.table)
+
+        # Add context menu to table
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
 
         # Add filter options
         filter_layout = QHBoxLayout()
@@ -317,3 +322,42 @@ class SnapshotViewerDialog(QDialog):
             except Exception as e:
                 QMessageBox.critical(self, "Error",
                     f"An unexpected error occurred during database purge: {str(e)}")
+
+    def show_context_menu(self, position):
+        menu = QMenu()
+        view_action = menu.addAction("View Details")
+        edit_action = menu.addAction("Edit Entry")
+        delete_action = menu.addAction("Delete")
+        
+        action = menu.exec_(self.table.mapToGlobal(position))
+        
+        if not self.table.selectedItems():
+            return
+            
+        row = self.table.selectedItems()[0].row()
+        snapshot_name = self.table.item(row, 0).data(Qt.UserRole)
+        
+        if action == view_action:
+            self.on_row_double_clicked(row, 0)
+        elif action == edit_action:
+            self.edit_snapshot(snapshot_name)
+        elif action == delete_action:
+            self.delete_selected_snapshot()
+
+    def edit_snapshot(self, snapshot_name):
+        row = self.table.currentRow()
+        if row >= 0:
+            # Get the individual field values instead of the composite key
+            date = self.table.item(row, 0).text()
+            map_name = self.table.item(row, 1).text()
+            outcome = self.table.item(row, 2).text()
+            team = self.table.item(row, 3).text()
+            match_details = {
+                'date': date,
+                'map': map_name,
+                'outcome': outcome,
+                'team': team
+            }
+            dialog = EditSnapshotDialog(self, match_details)
+            if dialog.exec_() == QDialog.Accepted:
+                self.refresh_snapshots()
