@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QTabWidget,
                            QLabel, QPushButton, QWidget)
 from PyQt5.QtCore import QSettings
 from ..tabs.overall_tab import setup_overall_tab
+from ..tabs.achievement_tab import setup_achievement_tab  # Import the new tab
 from ..tabs.class_tab import ClassTab
 from ..tabs.map_tab import MapTab
 from ..tabs.medals_tab import MedalsTab
@@ -60,10 +61,15 @@ class PlayerDetailsDialog(QDialog):
             ("Match History", MatchHistoryTab, [self, self.player_name, self.parent.db.db_path])
         )
 
+        # Add the new achievements tab
+        tab_configs.append(
+            ("Achievements", setup_achievement_tab, self)
+        )
+
         # Create and add tabs
         for tab_name, tab_class, args in tab_configs:
-            if tab_name == "Overall Stats":
-                tab = tab_class(args)  # Special handling for setup_overall_tab
+            if tab_name == "Overall Stats" or tab_name == "Achievements":
+                tab = tab_class(args)  # Special handling for setup_overall_tab and setup_achievement_tab
             else:
                 tab = tab_class(*args)  # All other tabs use positional args
             
