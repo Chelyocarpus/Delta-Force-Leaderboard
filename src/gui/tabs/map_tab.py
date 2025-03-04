@@ -115,33 +115,31 @@ class MapTab(QWidget):
 
         # Create pie series and set hole size for donut
         self.pie_series = QPieSeries()
-        self.pie_series.setHoleSize(0.35)
+        self.pie_series.setHoleSize(0.45)  # Increased hole size for better donut appearance
         victory_slice = self.pie_series.append("Victories", 0)
         defeat_slice = self.pie_series.append("Defeats", 0)
 
-        # Style the donut slices
-        victory_slice.setBrush(QColor(100, 200, 100))
-        defeat_slice.setBrush(QColor(200, 100, 100))
+        # Style the donut slices with more vibrant colors
+        victory_slice.setBrush(QColor(76, 175, 80))  # More vibrant green
+        defeat_slice.setBrush(QColor(244, 67, 54))   # More vibrant red
         
         # Set new label properties for each slice
         for slice in self.pie_series.slices():
             slice.setLabelVisible(True)
-            slice.setExploded(True)
-            slice.setExplodeDistanceFactor(0.1)
-            # Changed label arm behavior
-            slice.setLabelArmLengthFactor(0.2)  # Shorter arms
-            slice.setLabelPosition(QPieSlice.LabelInsideNormal)  # Start labels inside
-            # Use horizontal arms instead of angled
-            slice.setLabelPosition(QPieSlice.LabelInsideHorizontal)
+            slice.setExploded(False)  # Disable exploded slices for cleaner donut look
+            slice.setLabelPosition(QPieSlice.LabelOutside)  # Position labels outside
+            slice.setLabelArmLengthFactor(0.15)  # Shorter arms for cleaner look
+            slice.setLabelFont(QFont("Arial", 9, QFont.Bold))  # Add bold font to labels
+            slice.setPen(QColor(240, 240, 240))  # Add light border between slices
 
         chart = QChart()
         chart.addSeries(self.pie_series)
         chart.setAnimationOptions(QChart.SeriesAnimations)
-        chart.legend().setVisible(False)
+        chart.legend().setVisible(False)  # Hide legend since we have labels
         chart.setBackgroundVisible(False)
-        chart.setMinimumSize(300, 200)  # Set minimum size to prevent squishing
+        chart.setMinimumSize(300, 200)
 
-        # Create chart view
+        # Create chart view with antialiasing for smoother edges
         chart_view = QChartView(chart)
         chart_view.setRenderHint(QPainter.Antialiasing)
         chart_view.setMinimumHeight(200)

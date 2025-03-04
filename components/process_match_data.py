@@ -18,6 +18,8 @@ class Config:
         "Trench ines-Attack and Defend": "Trench Lines - Attack and Defend",
         "Cracked-Attack and Defend": "Cracked - Attack and Defend",
         "Shatted - Attack and Detend": "Shafted - Attack and Defend",
+        "Knite Edge - Attack and Defend": "Knife Edge - Attack and Defend",
+        "Threshold - Attack and Detend": "Threshold - Attack and Defend",
     }
     
     OUTCOME_CORRECTIONS = {
