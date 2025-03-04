@@ -116,8 +116,11 @@ class ImportManager:
                     file_str = str(file.absolute())
                     print(f"Debug - Checking file: {file.name}")
                     
-                    # Only check database, since tracking list is now validated
-                    if not self.db.is_duplicate_file(file_str):
+                    # Use thread-safe database access
+                    with self.db.get_connection():
+                        is_duplicate = self.db.is_duplicate_file(file_str)
+                    
+                    if not is_duplicate:
                         new_files.append((file.name, file_str))
                         print(f"Debug - New file found: {file.name}")
                     else:
@@ -143,14 +146,15 @@ class ImportManager:
             raise FileNotFoundError(f"File not found: {file_path}")
             
         try:
-            # Check for duplicates first
-            is_duplicate = self.db.is_duplicate_file(str(file))
-            if is_duplicate:
+            # Use thread-safe import method
+            success = self.db.import_csv_worker(str(file))
+            
+            if success:
+                self.imported_files.append(str(file))
+                self._save_imported_files()
+            else:
                 raise DuplicateFileError("This file has already been imported")
-
-            self.db.import_csv(str(file))
-            self.imported_files.append(str(file))
-            self._save_imported_files()
+                
         except (IOError, PermissionError) as e:
             raise FileImportError(f"Error accessing {file.name}: {str(e)}")
         except Exception as e:  # Keep this to catch any database errors
@@ -197,6 +201,7 @@ class ImportStartupDialog(QDialog):
         layout.addWidget(buttons)
     
     def get_selected_files(self) -> List[str]:
+        """Return list of selected file names"""
         selected = []
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)

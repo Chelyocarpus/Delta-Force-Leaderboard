@@ -32,6 +32,7 @@ from src.utils.constants import ROOT_DIR  # Added ROOT_DIR import
 from src.utils.update_checker import UpdateChecker
 import glob
 from src.gui.dialogs.import_on_startup import ImportManager, ImportStartupDialog
+from src.gui.dialogs.import_progress import ImportProgressDialog  # Add the new import
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -307,15 +308,19 @@ class MainWindow(QMainWindow):
         """Fetch aggregated player data from database"""
         search_text = self.search_input.text().lower()
         
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM matches")
-            if cursor.fetchone()[0] == 0:
-                return None
+        try:
+            with self.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM matches")
+                if cursor.fetchone()[0] == 0:
+                    return None
 
-            query = self._build_query()
-            cursor.execute(query, (f'%{search_text}%',))
-            return cursor.fetchall()
+                query = self._build_query()
+                cursor.execute(query, (f'%{search_text}%',))
+                return cursor.fetchall()
+        except Exception as e:
+            print(f"Error fetching data: {e}")
+            return None
 
     def _build_query(self):
         """Build the SQL query for fetching player statistics"""
@@ -408,23 +413,18 @@ class MainWindow(QMainWindow):
         file_names, _ = QFileDialog.getOpenFileNames(self, "Import CSV Files", "", "CSV Files (*.csv)")
         
         if file_names:
-            imported_count = 0
-            skipped_count = 0
+            # Show the import progress dialog
+            progress_dialog = ImportProgressDialog(self.db, file_names, self)
+            result = progress_dialog.exec_()
             
-            for file_name in file_names:
-                if self.db.import_csv(file_name):
-                    imported_count += 1
-                    self.statusBar().showMessage(f"Imported: {file_name}", 3000)
-                else:
-                    skipped_count += 1
-                    self.statusBar().showMessage(f"Skipped duplicate file: {file_name}", 3000)
-            
-            self.load_data_from_db()
-            
-            summary = f"Successfully imported {imported_count} file(s)"
-            if skipped_count > 0:
-                summary += f"\nSkipped {skipped_count} duplicate file(s)"
-            QMessageBox.information(self, "Import Complete", summary)
+            # Refresh the data view after import is complete
+            if result == QDialog.Accepted and (progress_dialog.successful_imports > 0 or progress_dialog.skipped_files > 0):
+                self.load_data_from_db()
+                
+                # Show a summary message in the status bar
+                summary = f"Import complete: {progress_dialog.successful_imports} imported, "
+                summary += f"{progress_dialog.skipped_files} skipped, {progress_dialog.failed_files} failed"
+                self.statusBar().showMessage(summary, 5000)
 
     def view_snapshots(self):
         dialog = SnapshotViewerDialog(self)
@@ -571,27 +571,40 @@ class MainWindow(QMainWindow):
 
     def check_new_files_on_startup(self):
         """Check for new files on application startup."""
-        if not (new_files := self.import_manager.check_new_files()):
-            return
-            
-        dialog = ImportStartupDialog([f[0] for f in new_files], self)
-        if not dialog.exec_() == QDialog.Accepted:
-            return
-            
-        self._process_startup_files(dialog.get_selected_files(), new_files)
+        try:
+            if not (new_files := self.import_manager.check_new_files()):
+                return
+                
+            dialog = ImportStartupDialog([f[0] for f in new_files], self)
+            if not dialog.exec_() == QDialog.Accepted:
+                return
+                
+            self._process_startup_files(dialog.get_selected_files(), new_files)
+        except Exception as e:
+            print(f"Error checking for new files: {e}")
+            QMessageBox.warning(self, "File Check Error", 
+                              f"Error checking for new files: {str(e)}")
 
     def _process_startup_files(self, selected_files, new_files):
         """Process files selected during startup."""
+        if not selected_files:
+            return
+            
+        files_to_import = []
         for filename in selected_files:
-            if not (matching_file := next((f[1] for f in new_files if f[0] == filename), None)):
-                continue
-                
-            if self.db.import_csv(matching_file):
-                self.statusBar().showMessage(f"Imported: {filename}", 3000)
-            else:
-                QMessageBox.critical(self, "Error", f"Failed to import {filename}")
+            if matching_file := next((f[1] for f in new_files if f[0] == filename), None):
+                files_to_import.append(matching_file)
         
-        self.load_data_from_db()
+        if files_to_import:
+            # Show import progress dialog for startup imports
+            progress_dialog = ImportProgressDialog(self.db, files_to_import, self)
+            result = progress_dialog.exec_()
+            
+            if result == QDialog.Accepted and progress_dialog.successful_imports > 0:
+                self.load_data_from_db()
+                summary = f"Import complete: {progress_dialog.successful_imports} imported, "
+                summary += f"{progress_dialog.skipped_files} skipped, {progress_dialog.failed_files} failed"
+                self.statusBar().showMessage(summary, 5000)
 
     def check_for_updates(self, manual_check=False, force_check=False):
         """Check for application updates from GitHub"""
