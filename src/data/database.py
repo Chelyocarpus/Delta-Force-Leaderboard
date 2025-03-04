@@ -6,11 +6,9 @@ import shutil
 import csv
 from pathlib import Path
 from typing import List
-import time
-import json
 from contextlib import contextmanager
 from queue import Queue
-from threading import Lock
+from threading import Lock, current_thread
 
 # Constants
 DB_FILENAME = 'leaderboard.db'
@@ -22,73 +20,42 @@ class ConnectionPool:
     def __init__(self, db_path, max_connections=5):
         self.db_path = db_path
         self.max_connections = max_connections
-        self.pool = Queue(maxsize=max_connections)
+        self.connections = {}  # Dict to track thread-specific connections
         self.lock = Lock()
-        self.active_connections = 0
         
-        # Pre-create some connections
-        for _ in range(max_connections // 2):
-            self._create_connection()
-
-    def _create_connection(self):
-        """Create a new database connection"""
-        if self.active_connections < self.max_connections:
-            try:
+    def get_connection(self):
+        """Get a connection specific to the current thread"""
+        thread_id = current_thread().ident
+        
+        with self.lock:
+            if thread_id not in self.connections:
+                # Create a new connection for this thread
                 conn = sqlite3.connect(self.db_path)
                 conn.row_factory = sqlite3.Row
-                with self.lock:
-                    self.active_connections += 1
-                self.pool.put(conn)
-            except sqlite3.Error as e:
-                print(f"Error creating connection: {e}")
-
-    @contextmanager
-    def get_connection(self):
-        """Get a connection from the pool"""
-        connection = None
-        try:
-            if self.pool.empty() and self.active_connections < self.max_connections:
-                self._create_connection()
-            connection = self.pool.get()
-            
-            # Test if connection is valid
-            try:
-                connection.cursor()
-                yield connection
-            except sqlite3.Error:
-                # Connection is invalid, create new one
-                connection.close()
-                with self.lock:
-                    self.active_connections -= 1
-                self._create_connection()
-                connection = self.pool.get()
-                yield connection
+                self.connections[thread_id] = conn
                 
+            return self.connections[thread_id]
+    
+    @contextmanager
+    def connection(self):
+        """Context manager for thread-safe database access"""
+        conn = self.get_connection()
+        try:
+            yield conn
         finally:
-            if connection:
-                try:
-                    connection.commit()  # Auto-commit any changes
-                    self.pool.put(connection)
-                except sqlite3.Error:
-                    # If connection is invalid, close it and create new one
-                    try:
-                        connection.close()
-                    except sqlite3.Error:
-                        pass
-                    with self.lock:
-                        self.active_connections -= 1
-                    self._create_connection()
+            # We don't close the connection as it's kept for the thread
+            # Just commit any changes
+            conn.commit()
 
     def close_all(self):
         """Close all connections in the pool"""
-        while not self.pool.empty():
-            try:
-                conn = self.pool.get()
-                conn.close()
-                with self.lock:
-                    self.active_connections -= 1
-            except sqlite3.Error:
-                pass
+        with self.lock:
+            for thread_id, conn in list(self.connections.items()):
+                try:
+                    conn.close()
+                    del self.connections[thread_id]
+                except sqlite3.Error:
+                    pass
 
 class Database:
     def __init__(self):
@@ -109,7 +76,7 @@ class Database:
 
     def get_connection(self):
         """Get a database connection from the pool"""
-        return self.pool.get_connection()
+        return self.pool.connection()
 
     def create_database(self):
         """Create database with minimal required structure"""
@@ -126,8 +93,6 @@ class Database:
             
             # Create basic indexes
             cursor.execute(f'CREATE INDEX IF NOT EXISTS idx_snapshot ON {TABLE_NAME}(snapshot_name)')
-            
-            conn.commit()
 
     def _ensure_columns_exist(self, headers):
         """Ensure all columns from CSV exist in database"""
@@ -155,7 +120,6 @@ class Database:
                     except sqlite3.OperationalError as e:
                         print(f"Column creation error: {e}")
             
-            conn.commit()
             return mapped_headers
 
     def get_imported_match_identifiers(self) -> List[tuple]:
@@ -172,7 +136,7 @@ class Database:
                     GROUP BY snapshot_name
                 """)
                 return cursor.fetchall()
-        except Exception as e:
+        except sqlite3.Error as e:
             print(f"Error getting imported matches: {e}")
             return []
 
@@ -215,9 +179,58 @@ class Database:
                             
                 return False
                     
-        except Exception as e:
+        except (IOError, csv.Error, IndexError, ValueError) as e:
             print(f"Error checking for duplicates: {e}")
             return False
+    
+    # Add a thread-safe import method for worker threads
+    def import_csv_worker(self, file_path: str) -> bool:
+        """Thread-safe import for worker threads"""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        # We'll do the duplicate check inside the method rather than separately
+        try:
+            # Read and validate CSV
+            with open(file_path, 'r', newline='') as csvfile:
+                csvreader = csv.reader(csvfile)
+                headers = next(csvreader)
+                rows = list(csvreader)
+                
+                if not rows:
+                    return False
+                
+                # Create unique ID for this match
+                snapshot_name = self._create_snapshot_name(headers, rows[0])
+                
+                # Thread-safe connection
+                with self.get_connection() as conn:
+                    # Check for duplicate first
+                    cursor = conn.cursor()
+                    cursor.execute(f"SELECT COUNT(*) FROM {TABLE_NAME} WHERE snapshot_name = ?", (snapshot_name,))
+                    if cursor.fetchone()[0] > 0:
+                        return False  # Skip duplicate
+                    
+                    # Process columns 
+                    header_mapping = self._ensure_columns_exist(headers)
+                    
+                    # Create records
+                    records = self._prepare_records(rows, headers, header_mapping, snapshot_name)
+                    
+                    # Insert records
+                    columns = list(records[0].keys())
+                    placeholders = ','.join(['?' for _ in columns])
+                    columns_str = ','.join([f'"{col}"' for col in columns])
+                    
+                    for record in records:
+                        values = [record[col] for col in columns]
+                        cursor.execute(f"INSERT INTO {TABLE_NAME} ({columns_str}) VALUES ({placeholders})", values)
+                        
+                    return True  # Success
+            
+        except (IOError, sqlite3.Error, csv.Error, KeyError, IndexError) as e:
+            print(f"Error importing file {file_path}: {e}")
+            raise
 
     def _read_csv_headers(self, file_path: str) -> tuple[list, csv.reader]:
         """Read CSV headers and return headers and reader object."""
@@ -273,7 +286,7 @@ class Database:
         """Import CSV file into database with dynamic columns."""
         if not os.path.exists(file_path):
             print(f"File not found: {file_path}")
-            return False
+            raise FileNotFoundError(f"File not found: {file_path}")
 
         if self.is_duplicate_file(file_path):
             print(f"Skipping duplicate file: {file_path}")
@@ -303,13 +316,13 @@ class Database:
 
         except (IOError, ValueError) as e:
             print(f"Import error: {e}")
-            return False
+            raise ValueError(f"Import error: {e}")
         except sqlite3.Error as e:
             print(f"Database error: {e}")
-            return False
+            raise sqlite3.Error(f"Database error: {e}")
         except Exception as e:
             print(f"Unexpected error during import: {e}")
-            return False
+            raise Exception(f"Unexpected error during import: {e}")
         finally:
             if 'reader' in locals() and hasattr(reader, 'close'):
                 reader.close()
@@ -386,7 +399,7 @@ class Database:
                 
                 return False, None
                 
-        except Exception as e:
+        except (sqlite3.Error, IndexError, ValueError) as e:
             print(f"Error checking duplicates: {e}")
             return False, None
 
@@ -421,9 +434,8 @@ class Database:
                         ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """, row)
                 
-                conn.commit()
                 return True
-        except Exception as e:
+        except sqlite3.Error as e:
             print(f"Error importing match data: {e}")
             return False
 
@@ -439,7 +451,7 @@ class Database:
                 self.create_database()
                 return True
 
-        except Exception as e:
+        except (sqlite3.Error, IOError) as e:
             print(f"Error during purge/backup: {e}")
             return False
 
