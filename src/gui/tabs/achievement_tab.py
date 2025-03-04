@@ -345,13 +345,8 @@ def check_achievement_progress(db_path, player_name, achievement):
             cursor = conn.cursor()
             cursor.execute(achievement["query"], (player_name,))
             result = cursor.fetchone()
-            
-            if not result or result[0] is None:
-                return 0
-            
-            # Convert to float for consistent handling
-            current_value = float(result[0])
-            return current_value
+
+            return 0 if not result or result[0] is None else float(result[0])
     except Exception as e:
         logger.error(f"Error checking achievement {achievement['name']}: {str(e)}")
         return 0
@@ -361,25 +356,24 @@ def calculate_level_thresholds(achievement):
     base = achievement["base_threshold"]
     factor = achievement["growth_factor"]
     max_level = achievement["max_level"]
-    
-    thresholds = []
-    for level in range(1, max_level + 1):
-        threshold = int(base * (factor ** (level - 1)))
-        thresholds.append(threshold)
-    
-    return thresholds
+
+    return [
+        int(base * (factor ** (level - 1)))
+        for level in range(1, max_level + 1)
+    ]
 
 def get_achievement_level(value, achievement):
     """Determine the achievement level based on progress using exponential thresholds"""
     thresholds = calculate_level_thresholds(achievement)
-    
-    for i, threshold in enumerate(thresholds):
-        if value < threshold:
-            return i, threshold, thresholds
-    
-    # If player has passed all thresholds, they're at max level
-    max_level = achievement["max_level"]
-    return max_level, thresholds[-1], thresholds
+
+    return next(
+        (
+            (i, threshold, thresholds)
+            for i, threshold in enumerate(thresholds)
+            if value < threshold
+        ),
+        (achievement["max_level"], thresholds[-1], thresholds),
+    )
 
 def create_achievement_widget(achievement, current_value):
     """Create a widget to display an achievement with exponential progression"""
