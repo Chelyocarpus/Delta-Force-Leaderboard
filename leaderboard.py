@@ -166,8 +166,6 @@ class MainWindow(QMainWindow):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
-        self.table.setContextMenuPolicy(Qt.DefaultContextMenu)
-        self.table.contextMenuEvent = self.tableContextMenuEvent
         self.table.itemClicked.connect(self.on_item_clicked)
         self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
 
@@ -433,20 +431,6 @@ class MainWindow(QMainWindow):
     def eventFilter(self, source, event):
         # Remove delete key handling
         return super().eventFilter(source, event)
-
-    def tableContextMenuEvent(self, event):
-        context_menu = QMenu(self)
-        
-        # Keep only the selection actions
-        select_all_action = QAction("Select All", self)
-        select_all_action.triggered.connect(self.table.selectAll)
-        context_menu.addAction(select_all_action)
-        
-        clear_selection_action = QAction("Clear Selection", self)
-        clear_selection_action.triggered.connect(self.table.clearSelection)
-        context_menu.addAction(clear_selection_action)
-        
-        context_menu.exec_(event.globalPos())
 
     def on_snapshot_deleted(self, snapshot_name):
         """Handle snapshot deletion updates"""

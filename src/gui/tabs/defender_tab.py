@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, 
                            QGridLayout, QLabel, QComboBox)
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPainter, QColor
+from PyQt5.QtGui import QPainter, QColor, QFont
 from PyQt5.QtChart import (QPieSeries, QChart, QChartView, QPieSlice)
 import sqlite3
 import logging
@@ -48,26 +48,33 @@ class DefenderTab(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
 
         self.efficiency_series = QPieSeries()
+        self.efficiency_series.setHoleSize(0.45)  # Set hole size to create donut chart
         kills_slice = self.efficiency_series.append("Kills", 0)
         deaths_slice = self.efficiency_series.append("Deaths", 0)
 
-        # Style slices
+        # Enhanced styling with better colors
+        kills_slice.setBrush(QColor(76, 175, 80))  # Vibrant green for kills
+        deaths_slice.setBrush(QColor(244, 67, 54))  # Vibrant red for deaths
+        
+        # Style all slices
         for pie_slice in self.efficiency_series.slices():
             pie_slice.setLabelVisible(True)
-            pie_slice.setExploded(True)
-            pie_slice.setExplodeDistanceFactor(0.1)
-            pie_slice.setLabelPosition(QPieSlice.LabelOutside)
+            pie_slice.setExploded(False)  # Disable explosion for cleaner donut
+            pie_slice.setLabelPosition(QPieSlice.LabelOutside)  # Place labels outside
+            pie_slice.setLabelArmLengthFactor(0.15)  # Shorter arm length
+            pie_slice.setLabelFont(QFont("Arial", 9, QFont.Bold))  # Bold font for better visibility
+            pie_slice.setPen(QColor(240, 240, 240))  # Light border between slices
 
-        kills_slice.setBrush(QColor(100, 200, 100))
-        deaths_slice.setBrush(QColor(200, 100, 100))
-
+        # Create and configure chart
         chart = QChart()
         chart.addSeries(self.efficiency_series)
         chart.setAnimationOptions(QChart.SeriesAnimations)
-        chart.legend().setVisible(False)
+        chart.legend().setVisible(False)  # Hide legend as we have labels
         chart.setBackgroundVisible(False)
         chart.setMinimumSize(300, 200)
+        chart.setTitle("") # Remove title as we have the group box title
 
+        # Create chart view with antialiasing
         chart_view = QChartView(chart)
         chart_view.setRenderHint(QPainter.Antialiasing)
         chart_view.setMinimumHeight(200)
@@ -213,13 +220,21 @@ class DefenderTab(QWidget):
         return query, query_params
 
     def update_chart(self, kills, deaths):
-        for idx, (value, label) in enumerate([
-            (kills, f"Kills ({kills or 0})"),
-            (deaths, f"Deaths ({deaths or 0})")
-        ]):
-            pie_slice = self.efficiency_series.slices()[idx]
-            pie_slice.setValue(value)
-            pie_slice.setLabel(label)
+        kills = kills or 0
+        deaths = deaths or 0
+        
+        # Update pie slices with values and labels
+        self.efficiency_series.slices()[0].setValue(kills)
+        self.efficiency_series.slices()[1].setValue(deaths)
+        
+        # Update labels with count information
+        self.efficiency_series.slices()[0].setLabel(f"Kills ({kills:,})")
+        self.efficiency_series.slices()[1].setLabel(f"Deaths ({deaths:,})")
+        
+        # If both values are zero, set some minimum values to avoid empty chart
+        if kills == 0 and deaths == 0:
+            self.efficiency_series.slices()[0].setValue(1)
+            self.efficiency_series.slices()[1].setValue(1)
 
     def update_stat_labels(self, stats):
         column_names = list(self.stat_labels.keys())
