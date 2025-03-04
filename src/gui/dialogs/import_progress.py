@@ -3,24 +3,28 @@ from PyQt5.QtWidgets import (
     QListWidget, QListWidgetItem, QApplication
 )
 from PyQt5.QtGui import QFont, QIcon, QColor
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QObject
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QRunnable, QThreadPool
 import os
 import time
 
-class ImportWorker(QObject):
-    """Worker thread for importing CSV files"""
+class ImportSignals(QObject):
+    """Signals for the import process"""
     progress = pyqtSignal(int, int)  # (current_file_index, total_files)
     file_status = pyqtSignal(str, bool, str)  # (filename, success, message)
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
+class ImportRunnable(QRunnable):
+    """Runnable for importing CSV files using QThreadPool"""
+    
     def __init__(self, db, files):
         super().__init__()
         self.db = db
         self.files = files
+        self.signals = ImportSignals()
         self.is_running = True
-
-    def process(self):
+        
+    def run(self):
         total_files = len(self.files)
         
         for i, file_path in enumerate(self.files):
@@ -28,11 +32,10 @@ class ImportWorker(QObject):
                 break
                 
             # Report progress
-            self.progress.emit(i, total_files)
+            self.signals.progress.emit(i, total_files)
             
-            # Update UI before processing
+            # Get file name for status reporting
             file_name = os.path.basename(file_path)
-            QApplication.processEvents()
             
             try:
                 # Use the thread-safe import method
@@ -40,17 +43,17 @@ class ImportWorker(QObject):
                 
                 # Use different messages for duplicates vs successful imports
                 if success:
-                    self.file_status.emit(file_name, True, "Successfully imported")
+                    self.signals.file_status.emit(file_name, True, "Successfully imported")
                 else:
-                    self.file_status.emit(file_name, False, "Skipped duplicate file")
+                    self.signals.file_status.emit(file_name, False, "Skipped duplicate file")
                     
                 # Small delay to prevent UI from freezing and show progress
                 time.sleep(0.1)
                 
             except Exception as e:
-                self.file_status.emit(file_name, False, f"Error: {str(e)}")
+                self.signals.file_status.emit(file_name, False, f"Error: {str(e)}")
         
-        self.finished.emit()
+        self.signals.finished.emit()
 
     def stop(self):
         self.is_running = False
@@ -65,8 +68,7 @@ class ImportProgressDialog(QDialog):
         self.successful_imports = 0
         self.skipped_files = 0
         self.failed_files = 0
-        self.thread = None
-        self.worker = None
+        self.runnable = None
         
         self.setWindowTitle("Importing Files")
         self.setMinimumWidth(500)
@@ -103,25 +105,21 @@ class ImportProgressDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
         layout.addWidget(self.button_box)
         
-        # Set up and start the worker thread
-        self.setup_worker_thread()
+        # Set up and start the import task
+        self.start_import()
         
-    def setup_worker_thread(self):
-        """Set up and start the worker thread"""
-        # Create worker thread
-        self.thread = QThread()
-        self.worker = ImportWorker(self.db, self.files)
-        self.worker.moveToThread(self.thread)
+    def start_import(self):
+        """Set up and start the import runnable"""
+        # Create the import runnable
+        self.runnable = ImportRunnable(self.db, self.files)
         
         # Connect signals
-        self.thread.started.connect(self.worker.process)
-        self.worker.progress.connect(self.update_progress)
-        self.worker.file_status.connect(self.update_file_status)
-        self.worker.finished.connect(self.import_finished)
-        self.worker.finished.connect(self.thread.quit)
+        self.runnable.signals.progress.connect(self.update_progress)
+        self.runnable.signals.file_status.connect(self.update_file_status)
+        self.runnable.signals.finished.connect(self.import_finished)
         
-        # Start the thread
-        self.thread.start()
+        # Start the runnable in the thread pool
+        QThreadPool.globalInstance().start(self.runnable)
         
     def update_progress(self, current, total):
         """Update progress bar and status label"""
@@ -164,39 +162,17 @@ class ImportProgressDialog(QDialog):
         self.button_box.addButton(QDialogButtonBox.Ok)
         self.button_box.accepted.connect(self.accept)
         
-        # Clean up the thread and worker
-        self.cleanup_thread()
-        
-    def cleanup_thread(self):
-        """Clean up the thread safely"""
-        if hasattr(self, 'worker') and self.worker:
-            self.worker.is_running = False
-            
-        if hasattr(self, 'thread') and self.thread:
-            if self.thread.isRunning():
-                self.thread.quit()
-                # Give it some time to quit
-                self.thread.wait(500)
-            
-            # Don't deleteLater here since we want to verify the thread is done first
-            
     def reject(self):
         """Handle dialog rejection (Cancel button)"""
         # Stop the import process
-        if hasattr(self, 'worker') and self.worker:
-            self.worker.stop()
-        
-        # Clean up and wait for the thread to finish
-        self.cleanup_thread()
+        if self.runnable:
+            self.runnable.stop()
         
         # Call the base class reject
         super().reject()
     
     def closeEvent(self, event):
         """Handle window close event"""
-        self.cleanup_thread()
+        if self.runnable:
+            self.runnable.stop()
         super().closeEvent(event)
-        
-    def __del__(self):
-        """Destructor to ensure thread cleanup"""
-        self.cleanup_thread()

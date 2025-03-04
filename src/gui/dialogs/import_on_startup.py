@@ -147,18 +147,16 @@ class ImportManager:
             
         try:
             # Use thread-safe import method
-            success = self.db.import_csv_worker(str(file))
-            
-            if success:
+            if (success := self.db.import_csv_worker(str(file))):
                 self.imported_files.append(str(file))
                 self._save_imported_files()
             else:
                 raise DuplicateFileError("This file has already been imported")
                 
         except (IOError, PermissionError) as e:
-            raise FileImportError(f"Error accessing {file.name}: {str(e)}")
+            raise FileImportError(f"Error accessing {file.name}: {str(e)}") from e
         except Exception as e:  # Keep this to catch any database errors
-            raise FileImportError(f"Error importing {file.name}: {str(e)}")
+            raise FileImportError(f"Error importing {file.name}: {str(e)}") from e
 
 class ImportStartupDialog(QDialog):
     def __init__(self, files: List[str], parent: Optional[QDialog] = None) -> None:

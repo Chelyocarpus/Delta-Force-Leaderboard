@@ -6,8 +6,6 @@ import shutil
 import csv
 from pathlib import Path
 from typing import List
-import time
-import json
 from contextlib import contextmanager
 from queue import Queue
 from threading import Lock, current_thread
@@ -138,7 +136,7 @@ class Database:
                     GROUP BY snapshot_name
                 """)
                 return cursor.fetchall()
-        except Exception as e:
+        except sqlite3.Error as e:
             print(f"Error getting imported matches: {e}")
             return []
 
@@ -181,7 +179,7 @@ class Database:
                             
                 return False
                     
-        except Exception as e:
+        except (IOError, csv.Error, IndexError, ValueError) as e:
             print(f"Error checking for duplicates: {e}")
             return False
     
@@ -230,7 +228,7 @@ class Database:
                         
                     return True  # Success
             
-        except Exception as e:
+        except (IOError, sqlite3.Error, csv.Error, KeyError, IndexError) as e:
             print(f"Error importing file {file_path}: {e}")
             raise
 
@@ -401,7 +399,7 @@ class Database:
                 
                 return False, None
                 
-        except Exception as e:
+        except (sqlite3.Error, IndexError, ValueError) as e:
             print(f"Error checking duplicates: {e}")
             return False, None
 
@@ -437,7 +435,7 @@ class Database:
                     """, row)
                 
                 return True
-        except Exception as e:
+        except sqlite3.Error as e:
             print(f"Error importing match data: {e}")
             return False
 
@@ -453,7 +451,7 @@ class Database:
                 self.create_database()
                 return True
 
-        except Exception as e:
+        except (sqlite3.Error, IOError) as e:
             print(f"Error during purge/backup: {e}")
             return False
 

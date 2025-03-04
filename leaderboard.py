@@ -576,7 +576,7 @@ class MainWindow(QMainWindow):
                 return
                 
             dialog = ImportStartupDialog([f[0] for f in new_files], self)
-            if not dialog.exec_() == QDialog.Accepted:
+            if dialog.exec_() != QDialog.Accepted:
                 return
                 
             self._process_startup_files(dialog.get_selected_files(), new_files)
