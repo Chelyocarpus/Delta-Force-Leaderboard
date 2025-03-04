@@ -262,24 +262,6 @@ ACHIEVEMENTS = {
     # New category for Map achievements
     "Map Mastery": [
         {
-            "id": "map_diversification",
-            "name": "Map Explorer",
-            "description": "Play on different maps at least 5 times each",
-            "base_threshold": 1,
-            "growth_factor": 2,
-            "max_level": 10,
-            "query": """
-                SELECT COUNT(*) FROM (
-                    SELECT map
-                    FROM matches 
-                    WHERE name = ? AND map IS NOT NULL AND map != ''
-                    GROUP BY map
-                    HAVING COUNT(*) >= 5
-                )
-            """,
-            "icon": "medal_maps.png"
-        },
-        {
             "id": "map_specialist",
             "name": "Map Specialist",
             "description": "Play many matches on a single map",
@@ -287,51 +269,42 @@ ACHIEVEMENTS = {
             "growth_factor": 2.0,
             "max_level": 10,
             "query": """
-                SELECT MAX(map_count) FROM (
-                    SELECT map, COUNT(*) as map_count 
-                    FROM matches 
-                    WHERE name = ? AND map IS NOT NULL AND map != ''
-                    GROUP BY map
-                )
+                SELECT map, COUNT(*) as map_count 
+                FROM matches 
+                WHERE name = ? AND map IS NOT NULL AND map != ''
+                GROUP BY map
+                ORDER BY map_count DESC
+                LIMIT 1
             """,
             "icon": "medal_map_expert.png"
-        },
-        {
-            "id": "conquest_master",
-            "name": "Conquest Master",
-            "description": "Win matches on different maps (at least 2 wins each)",
-            "base_threshold": 2,
-            "growth_factor": 1.5,
-            "max_level": 5,
-            "query": """
-                SELECT COUNT(*) FROM (
-                    SELECT map
-                    FROM matches 
-                    WHERE name = ? AND outcome LIKE '%VICTORY%' AND map IS NOT NULL AND map != ''
-                    GROUP BY map
-                    HAVING COUNT(*) >= 2
-                )
-            """,
-            "icon": "medal_conquest.png"
         },
         {
             "id": "map_domination",
             "name": "Map Domination",
             "description": "Achieve high win rate on a specific map (min. 5 matches)",
-            "base_threshold": 60,
-            "growth_factor": 1.2,
-            "max_level": 10,
+            "thresholds": [  # Fixed win rate thresholds for each level
+                55,  # Level 1: 55%
+                60,  # Level 2: 60%
+                65,  # Level 3: 65%
+                70,  # Level 4: 70%
+                75,  # Level 5: 75%
+                80,  # Level 6: 80%
+                85,  # Level 7: 85%
+                90,  # Level 8: 90%
+                95,  # Level 9: 95%
+                100  # Level 10: 100%
+            ],
             "query": """
-                SELECT MAX(win_percentage) FROM (
-                    SELECT 
-                        map, 
-                        COUNT(*) as total_matches,
-                        ROUND(SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)) as win_percentage
-                    FROM matches 
-                    WHERE name = ? AND map IS NOT NULL AND map != ''
-                    GROUP BY map
-                    HAVING COUNT(*) >= 5
-                )
+                SELECT 
+                    map,
+                    COUNT(*) as total_matches,
+                    ROUND(SUM(CASE WHEN outcome LIKE '%VICTORY%' THEN 1 ELSE 0 END) * 100.0 / COUNT(*)) as win_percentage
+                FROM matches 
+                WHERE name = ? AND map IS NOT NULL AND map != ''
+                GROUP BY map
+                HAVING COUNT(*) >= 5
+                ORDER BY win_percentage DESC
+                LIMIT 1
             """,
             "icon": "medal_domination.png"
         }
@@ -343,13 +316,24 @@ def check_achievement_progress(db_path, player_name, achievement):
     try:
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
-            cursor.execute(achievement["query"], (player_name,))
-            result = cursor.fetchone()
-
-            return 0 if not result or result[0] is None else float(result[0])
+            if achievement["id"] == "map_domination":
+                cursor.execute(achievement["query"], (player_name,))
+                result = cursor.fetchone()
+                # Return tuple of (win_rate, map_name, total_matches) for map_domination
+                return (0, None, 0) if not result else (float(result[2]), result[0], int(result[1]))
+            elif achievement["id"] == "map_specialist":
+                cursor.execute(achievement["query"], (player_name,))
+                result = cursor.fetchone()
+                # Return tuple of (count, map_name) for map_specialist
+                return (0, None) if not result else (int(result[1]), result[0])
+            else:
+                # Original behavior for other achievements
+                cursor.execute(achievement["query"], (player_name,))
+                result = cursor.fetchone()
+                return 0 if not result or result[0] is None else float(result[0])
     except Exception as e:
         logger.error(f"Error checking achievement {achievement['name']}: {str(e)}")
-        return 0
+        return (0, None) if achievement["id"] == "map_specialist" else (0 if achievement["id"] != "map_domination" else (0, None, 0))
 
 def calculate_level_thresholds(achievement):
     """Calculate exponentially increasing thresholds for achievement levels"""
@@ -407,85 +391,207 @@ def create_achievement_widget(achievement, current_value):
     
     info_layout.addWidget(name_label)
     info_layout.addWidget(desc_label)
-    
-    # Calculate level and thresholds
-    level, current_level_threshold, all_thresholds = get_achievement_level(current_value, achievement)
-    
-    # Format numbers with thousand separators
-    current_value_formatted = f"{int(current_value):,}"
-    threshold_formatted = f"{current_level_threshold:,}"
-    
-    if level < achievement["max_level"]:
-        if current_level_threshold > 0:
-            progress = int(round((current_value / current_level_threshold) * 100))
-            progress = max(0, min(100, progress))
-        else:
-            progress = 0
-        
-        # Create level indicator with stars - using a more readable gold color
-        level_text = "★" * level + "☆" * (achievement["max_level"] - level)
-        level_label = QLabel(f"Level {level} {level_text}")
-        level_label.setStyleSheet(f"""
-            color: {'#FFC125' if level > 0 else '#666'};  /* Brighter gold */
-            font-size: 12px;
-            margin-bottom: 2px;
-        """)
-        info_layout.addWidget(level_label)
-        
-        # Enhanced progress bar
-        progress_bar = QProgressBar()
-        progress_bar.setRange(0, 100)
-        progress_bar.setValue(progress)
-        
-        # Color-code progress bar based on completion
-        if progress >= 66:
-            style_color = "#4CAF50"  # Green
-        elif progress >= 33:
-            style_color = "#FFA726"  # Orange
-        else:
-            style_color = "#2196F3"  # Blue
+
+    if achievement["id"] == "map_domination":
+        win_rate, map_name, total_matches = current_value
+        if map_name:
+            # Calculate level based on fixed thresholds
+            thresholds = achievement["thresholds"]
+            level = 0
+            for i, threshold in enumerate(thresholds):
+                if win_rate >= threshold:
+                    level = i + 1
             
-        progress_bar.setStyleSheet(f"""
-            QProgressBar {{
-                border: 1px solid #CCC;
-                border-radius: 3px;
-                text-align: center;
-                height: 20px;
-            }}
-            QProgressBar::chunk {{
-                background-color: {style_color};
-                border-radius: 2px;
-            }}
-        """)
-        
-        # Show detailed progress information
-        progress_text = f"{current_value_formatted}/{threshold_formatted}"
-        progress_bar.setFormat(f"{progress_text} ({progress}%)")
-        info_layout.addWidget(progress_bar)
-        
-        # Show next level info - fixed calculation
-        if level < achievement["max_level"]:  # Changed condition to show for all non-max levels
-            next_threshold = all_thresholds[level]
-            remaining = int(next_threshold - current_value)  # Convert to integer
-            next_level_label = QLabel(f"{remaining:,} points to next level")
-            next_level_label.setStyleSheet("color: #666; font-size: 10px;")
-            info_layout.addWidget(next_level_label)
+            # Create level indicator with stars
+            max_level = len(thresholds)
+            level_text = "★" * level + "☆" * (max_level - level)
+            level_label = QLabel(f"Level {level} {level_text}")
+            level_label.setStyleSheet(f"color: {'#FFC125' if level > 0 else '#666'}; font-size: 12px;")
+            info_layout.addWidget(level_label)
+            
+            # Show map info
+            map_label = QLabel(f"<span style='color: #666; font-size: 12px;'>{map_name} ({total_matches} matches)</span>")
+            map_label.setTextFormat(Qt.RichText)
+            info_layout.addWidget(map_label)
+
+            # Add progress bar for win rate
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, 100)
+            progress_bar.setValue(int(win_rate))
+            
+            # Color-code based on win rate
+            if win_rate >= 75:
+                style_color = "#4CAF50"  # Green
+            elif win_rate >= 60:
+                style_color = "#FFA726"  # Orange
+            else:
+                style_color = "#2196F3"  # Blue
+                
+            progress_bar.setStyleSheet(f"""
+                QProgressBar {{
+                    border: 1px solid #CCC;
+                    border-radius: 3px;
+                    text-align: center;
+                    height: 20px;
+                }}
+                QProgressBar::chunk {{
+                    background-color: {style_color};
+                    border-radius: 2px;
+                }}
+            """)
+            
+            progress_bar.setFormat(f"{win_rate:.1f}% Win Rate")
+            info_layout.addWidget(progress_bar)
+            
+            if level < max_level:
+                next_threshold = thresholds[level]
+                points_needed = next_threshold - win_rate
+                next_level_label = QLabel(f"+{points_needed:.1f}% to next level ({next_threshold}%)")
+                next_level_label.setStyleSheet("color: #666; font-size: 10px;")
+                info_layout.addWidget(next_level_label)
+        else:
+            # No qualifying maps yet
+            no_data_label = QLabel("Play at least 5 matches on a map")
+            no_data_label.setStyleSheet("color: #666; font-style: italic;")
+            info_layout.addWidget(no_data_label)
+    elif achievement["id"] == "map_specialist":
+        matches_played, map_name = current_value
+        if map_name:
+            # Calculate level and thresholds
+            level, current_level_threshold, all_thresholds = get_achievement_level(matches_played, achievement)
+            
+            # Create level indicator with stars
+            level_text = "★" * level + "☆" * (achievement["max_level"] - level)
+            level_label = QLabel(f"Level {level} {level_text}")
+            level_label.setStyleSheet(f"color: {'#FFC125' if level > 0 else '#666'}; font-size: 12px;")
+            info_layout.addWidget(level_label)
+            
+            # Show map info
+            map_label = QLabel(f"<span style='color: #666; font-size: 12px;'>Most played: {map_name}</span>")
+            map_label.setTextFormat(Qt.RichText)
+            info_layout.addWidget(map_label)
+
+            # Add progress bar
+            progress = int(round((matches_played / current_level_threshold) * 100)) if current_level_threshold > 0 else 0
+            progress = min(100, progress)
+            
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, 100)
+            progress_bar.setValue(progress)
+            
+            # Color-code based on progress
+            if progress >= 66:
+                style_color = "#4CAF50"  # Green
+            elif progress >= 33:
+                style_color = "#FFA726"  # Orange
+            else:
+                style_color = "#2196F3"  # Blue
+                
+            progress_bar.setStyleSheet(f"""
+                QProgressBar {{
+                    border: 1px solid #CCC;
+                    border-radius: 3px;
+                    text-align: center;
+                    height: 20px;
+                }}
+                QProgressBar::chunk {{
+                    background-color: {style_color};
+                    border-radius: 2px;
+                }}
+            """)
+            
+            progress_bar.setFormat(f"{matches_played:,} matches played")
+            info_layout.addWidget(progress_bar)
+            
+            if level < achievement["max_level"]:
+                next_threshold = all_thresholds[level]
+                remaining = next_threshold - matches_played
+                next_level_label = QLabel(f"{remaining:,} matches to next level")
+                next_level_label.setStyleSheet("color: #666; font-size: 10px;")
+                info_layout.addWidget(next_level_label)
+        else:
+            no_data_label = QLabel("No matches played yet")
+            no_data_label.setStyleSheet("color: #666; font-style: italic;")
+            info_layout.addWidget(no_data_label)
     else:
-        # Max level reached styling - adjusted gold color
-        max_label = QLabel(f"ELITE ACHIEVED - Level {level}")
-        max_label.setStyleSheet("""
-            color: #FFC125;  /* Brighter gold */
-            font-weight: bold;
-            font-size: 14px;
-            padding: 5px;
-            background-color: #2C3E50;
-            border-radius: 3px;
-        """)
-        info_layout.addWidget(max_label)
+        # Calculate level and thresholds
+        level, current_level_threshold, all_thresholds = get_achievement_level(current_value, achievement)
         
-        total_label = QLabel(f"Total Score: {current_value_formatted}")
-        total_label.setStyleSheet("color: #666; font-size: 12px;")
-        info_layout.addWidget(total_label)
+        # Format numbers with thousand separators
+        current_value_formatted = f"{int(current_value):,}"
+        threshold_formatted = f"{current_level_threshold:,}"
+        
+        if level < achievement["max_level"]:
+            if current_level_threshold > 0:
+                progress = int(round((current_value / current_level_threshold) * 100))
+                progress = max(0, min(100, progress))
+            else:
+                progress = 0
+            
+            # Create level indicator with stars - using a more readable gold color
+            level_text = "★" * level + "☆" * (achievement["max_level"] - level)
+            level_label = QLabel(f"Level {level} {level_text}")
+            level_label.setStyleSheet(f"""
+                color: {'#FFC125' if level > 0 else '#666'};  /* Brighter gold */
+                font-size: 12px;
+                margin-bottom: 2px;
+            """)
+            info_layout.addWidget(level_label)
+            
+            # Enhanced progress bar
+            progress_bar = QProgressBar()
+            progress_bar.setRange(0, 100)
+            progress_bar.setValue(progress)
+            
+            # Color-code progress bar based on completion
+            if progress >= 66:
+                style_color = "#4CAF50"  # Green
+            elif progress >= 33:
+                style_color = "#FFA726"  # Orange
+            else:
+                style_color = "#2196F3"  # Blue
+                
+            progress_bar.setStyleSheet(f"""
+                QProgressBar {{
+                    border: 1px solid #CCC;
+                    border-radius: 3px;
+                    text-align: center;
+                    height: 20px;
+                }}
+                QProgressBar::chunk {{
+                    background-color: {style_color};
+                    border-radius: 2px;
+                }}
+            """)
+            
+            # Show detailed progress information
+            progress_text = f"{current_value_formatted}/{threshold_formatted}"
+            progress_bar.setFormat(f"{progress_text} ({progress}%)")
+            info_layout.addWidget(progress_bar)
+            
+            # Show next level info - fixed calculation
+            if level < achievement["max_level"]:  # Changed condition to show for all non-max levels
+                next_threshold = all_thresholds[level]
+                remaining = int(next_threshold - current_value)  # Convert to integer
+                next_level_label = QLabel(f"{remaining:,} points to next level")
+                next_level_label.setStyleSheet("color: #666; font-size: 10px;")
+                info_layout.addWidget(next_level_label)
+        else:
+            # Max level reached styling - adjusted gold color
+            max_label = QLabel(f"ELITE ACHIEVED - Level {level}")
+            max_label.setStyleSheet("""
+                color: #FFC125;  /* Brighter gold */
+                font-weight: bold;
+                font-size: 14px;
+                padding: 5px;
+                background-color: #2C3E50;
+                border-radius: 3px;
+            """)
+            info_layout.addWidget(max_label)
+            
+            total_label = QLabel(f"Total Score: {current_value_formatted}")
+            total_label.setStyleSheet("color: #666; font-size: 12px;")
+            info_layout.addWidget(total_label)
     
     layout.addLayout(info_layout)
     layout.setStretch(1, 1)  # Make info section expand
