@@ -1,32 +1,35 @@
-# delta-force-leaderboard
-(![Splash Screen](https://github.com/user-attachments/assets/afe99d59-28dc-4896-81fa-3025da782333)
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/afe99d59-28dc-4896-81fa-3025da782333" width="50%" />
+</p>
 
 This project processes and analyzes player statistics from the Delta Force video game using OCR and data processing techniques, aiming to provide detailed insights and analytics for players. The project consists of several scripts that handle different aspects of the workflow, from preparing the screenshot for OCR, performing OCR on images, processing and cleaning the extracted data, and finally displaying the results in a user-friendly GUI.
 
 Despite its name, this project could be adapted to any video game that features a scoreboard or statistics. The OCR and file structure allows for customization to fit different game formats and data structures, making it a versatile tool for analyzing player performance across various games.
 
-It is a also prime example of the capabilities of AI tools like GitHub Copilot, Claude 3.5 Sonnet, and GPT-4. The codebase is entirely generated with the assistance of these language models, showcasing their potential in software development.
+It is a also prime example of the capabilities of AI tools like GitHub Copilot and Claude 3.5 & 3.7 Sonnet. The codebase is entirely generated with the assistance of these language models, showcasing their potential in software development.
 
 # Core Features
 
-📊 **Comprehensive Statistics**
+📊 **Comprehensive Performance Tracking**
 <p align="center">
     <img src="https://github.com/user-attachments/assets/c8403b36-7b3a-4e52-a56f-bfc8d6fb8185" width="50%" />
 </p>
 
-- Detailed player performance metrics including K/D ratio, assists, revives and captures
-- Advanced scoring system for multiple combat roles
-- Historical match data preservation
+- Monitors monthly trends for kills, deaths, assists, and revives with interactive visualization
+- Tracks detailed combat metrics including K/D ratio, vehicle damage, and objective captures
+- Records and displays player class usage percentages and identifies favorite class
+- Calculates win rates and tracks match outcomes with detailed performance history
+- Measures team contributions through revives, tactical respawns, and assist tracking
 
-
-🎖️ **Medal Recognition System**
+🎖️ **Medal Tracking System**
 <p align="center">
     <img src="https://github.com/user-attachments/assets/37d62074-78b2-48b5-9861-19e5cc2cd619" width="50%" />
 </p>
 
+- Medal statistics tracking with visual summary at the top
 - Automatic detection of Combat, Capture, Logistics, and Intelligence medals
-- Tracks Bronze, Silver, and Gold achievement tiers
-- Recognition for outstanding battlefield performances
+- Dynamic table display showing match history with medal achievements
+- Color-coded visualization of Bronze, Silver, and Gold tier medals with emoji indicators
 
 
 ⚔️ **Multi-Role Support**
@@ -34,42 +37,47 @@ It is a also prime example of the capabilities of AI tools like GitHub Copilot, 
     <img src="https://github.com/user-attachments/assets/3a18e9ad-8d71-48d4-97f7-db747de10232" width="50%" />
 </p>
 
-- Specialized tracking for Support, Recon, Assault, and Engineer classes
-- Role-specific performance metrics
+- Shows detailed statistics for each class including games played, victories, and win rates
+- Tracks kills, deaths, K/D ratio, and vehicle damage statistics per class
+- Displays total score, average score, and best score achievements per class
 
 
-🎯 **Map Intelligence**
+🎯 **Map Performance**
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/3fe6d2f3-27e6-4e1a-9262-6fa6a27b67d8" width="50%" />
+    <img src="https://github.com/user-attachments/assets/4b584b98-beb4-456c-940b-e9b660c8c9a9" width="50%" />
 </p>
 
-- Performance tracking across different battlefields
-- Map-specific statistics and outcomes
+- Track performance metrics for each battlefield
+- Monitor kills, score, and combat efficiency per map
+- Track your best performances and averages
 
 
 🤝 **Team Analytics**
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/980074c0-7d39-417b-90a8-6a8de87a1c1a" width="50%" />
+    <img src="https://github.com/user-attachments/assets/35d01e74-a8d2-45e6-bf72-7094ea984b3d" width="50%" />
 </p>
 
 - Detailed team performance metrics
 - Attack and Defense side statistics
 
+🥇 **Achievements**
+<p align="center">
+    <img src="https://github.com/user-attachments/assets/4f0ec69f-8155-4dad-89e4-093c4e2bc9ac" width="50%" />
+</p>
+
+- Tracks 16+ unique achievements across 5 categories with exponential progression and visual star ratings
+- Shows detailed performance metrics with color-coded progress bars
+- Features 8-10 levels per achievement with clear progress tracking
 
 💾 **Database Management**
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/7e9feb4c-93d8-452f-ac9e-6e61cd977b18" width="50%" />
+  <img src="https://github.com/user-attachments/assets/a5cf999e-e82d-479e-8425-8855067efbb1" width="50%" />
 </p>
 
 - Comprehensive automated backup system that creates hourly snapshots of the database to prevent data loss
 - Manual backup functionality allowing users to create on-demand database copies at any time
 - Flexible restore system capable of recovering data from any previous backup point
 - Advanced data integrity checks and protection mechanisms to ensure database reliability
-
-🔍 **Search & Filter**
-- Quick player lookup
-- Sort by any stat column
-- Customizable data views
 
 🔄 **Automated Processing**
 - Screenshot-based data capture
@@ -130,19 +138,27 @@ It is a also prime example of the capabilities of AI tools like GitHub Copilot, 
 > [!tip]
 > To install the necessary dependencies, run the following command in your terminal: `pip install -r requirements.txt`
 
+- PyQt5==5.15.9
+- Pillow==10.0.0
+- tqdm==4.66.1
 - python-doctr==0.6.0
 - python-doctr[torch]
-- Pillow>=9.0.0
 - typing-extensions>=4.0.0
 - pathlib>=1.0.1
+- markdown>=3.4.1
+- packaging>=21.3
+- requests>=2.27.1
+- security==1.3.1
 
 # Q & A
 - **Q: Can using these scripts result in a ban due to anti-cheat mechanisms?**
 - **A:** No, these scripts operate solely on screenshots captured via the print screen button or Steam overlay. They do not interact with the game directly (no memory reading, hooking, etc.), ensuring compliance with anti-cheat policies.
 
+- **Q: Does this include statistics for all Delta Force players?**
+- **A:** No, it only displays stats for players you've played with. The data comes solely from the screenshots you've imported, there's no access to an online database.
+
 # Credits
-- Claude 3.5 Sonnet (Main Developer)
-- GPT-4 (AI Assistance)
+- Claude 3.5 & 3.7 Sonnet (Main Developer)
 - Team Jade (Delta Force Developers)
 - GitHub Copilot (Code Suggestions)
 - Community Contributors
