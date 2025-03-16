@@ -57,6 +57,6 @@ def process_all_images(folder_path):
             print("Processing {0}: Using right team region. Saved as {1}".format(image_path, output_path))
 
 if __name__ == "__main__":
-    # Update this path to your screenshots folder
-    screenshots_folder = r"S:\Steam\userdata\40101941\760\remote\2507950\screenshots"
+    # Update this path to use the environment variable
+    screenshots_folder = os.environ.get("DELTA_SCREENSHOTS_PATH", r"S:\Steam\userdata\40101941\760\remote\2507950\screenshots")
     process_all_images(screenshots_folder)

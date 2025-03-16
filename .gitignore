@@ -9,3 +9,4 @@ leaderboard.db
 *.db-wal
 imported_files.json
 /cache
+settings.json

@@ -21,7 +21,7 @@ def crop_image(image_path, output_folder, coordinates, region_name):
     print(f"Cropped {region_name} image saved at: {cropped_path}")
 
 # Input and output paths
-screenshots_path = r"S:\Steam\userdata\40101941\760\remote\2507950\screenshots"
+screenshots_path = os.environ.get("DELTA_SCREENSHOTS_PATH", r"S:\Steam\userdata\40101941\760\remote\2507950\screenshots")
 output_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'workflow')
 
 # Define regions with their coordinates
