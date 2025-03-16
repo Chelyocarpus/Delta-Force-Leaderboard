@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QMenu, QAction, QMenuBar, QFileDialog, QMessageBox, QHBoxLayout, QLabel, QHeaderView, QLineEdit, QDialog
 )
 from PyQt5.QtCore import Qt, QSettings, QTimer
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QColor  # Add QColor import
 import csv, sqlite3, os, shutil  # Added shutil import here
 
 try:
@@ -24,6 +24,7 @@ from src.gui.dialogs.snapshot_viewer import SnapshotViewerDialog
 from src.gui.dialogs.player_details import PlayerDetailsDialog
 from src.gui.widgets.numeric_sort import NumericSortItem
 from src.gui.dialogs.update_dialog import UpdateDialog
+from src.gui.dialogs.onboarding_dialog import OnboardingDialog
 
 from src.utils.constants import RESOURCES_DIR
 from src.utils.constants import IMPORT_DIR
@@ -43,6 +44,11 @@ class MainWindow(QMainWindow):
         self.setGeometry(100, 100, 1000, 600)
         self.settings = QSettings('DeltaForce', 'Leaderboard')
         
+        # Check if this is the first run and show onboarding if needed
+        self.player_name = self.settings.value('player_name', '')
+        if not self.player_name:
+            QTimer.singleShot(100, self.show_onboarding)
+            
         self.restore_window_state()
 
         # Set window icon
@@ -72,6 +78,7 @@ class MainWindow(QMainWindow):
         self.search_input.setPlaceholderText("Search by name...")
         self.search_input.textChanged.connect(self.on_search)
         search_layout.addWidget(self.search_input)
+        
         self.main_layout.addLayout(search_layout)
 
         # Create table
@@ -90,6 +97,37 @@ class MainWindow(QMainWindow):
         # Check for updates if enabled, but use a slightly longer delay
         if self.settings.value('check_updates_on_startup', True, type=bool):
             QTimer.singleShot(2000, lambda: self.check_for_updates(manual_check=False, force_check=True))
+
+    def show_onboarding(self):
+        """Show the onboarding dialog to set player name"""
+        dialog = OnboardingDialog(self)
+        result = dialog.exec_()
+        
+        if result == QDialog.Accepted:
+            self.player_name = dialog.get_player_name()
+            self.settings.setValue('player_name', self.player_name)
+            
+            # Refresh data to highlight player's row
+            self.load_data_from_db()
+
+    def show_player_name_dialog(self):
+        """Show dialog to change player name"""
+        dialog = OnboardingDialog(self)
+        if self.player_name:
+            dialog.name_input.setText(self.player_name)
+            dialog.validate_input(self.player_name)
+        
+        if dialog.exec_() == QDialog.Accepted and dialog.get_player_name():
+            old_name = self.player_name
+            self.player_name = dialog.get_player_name()
+            self.settings.setValue('player_name', self.player_name)
+            
+            self.load_data_from_db()
+
+            # Close any existing player details dialogs without reopening
+            for widget in QApplication.topLevelWidgets():
+                if isinstance(widget, PlayerDetailsDialog):
+                    widget.close()
 
     def setup_auto_backup(self):
         """Setup automatic backup timer"""
@@ -207,6 +245,11 @@ class MainWindow(QMainWindow):
         view_snapshots_action = QAction("View Snapshots", self)
         view_snapshots_action.triggered.connect(self.view_snapshots)
         file_menu.addAction(view_snapshots_action)
+        
+        # Add player name setting action
+        set_player_action = QAction("Set Player Name", self)
+        set_player_action.triggered.connect(self.show_player_name_dialog)
+        file_menu.addAction(set_player_action)
 
         # Add backup/restore menu
         backup_menu = menubar.addMenu("Backup")
@@ -361,13 +404,24 @@ class MainWindow(QMainWindow):
             'vehicle_damage', 'tactical_respawn'
         }
         
+        # Define a more neutral highlight color (light blue-gray)
+        highlight_color = QColor(220, 230, 240)  # Light blue-gray
+        
         self.table.setRowCount(len(data))
         for row, row_data in enumerate(data):
+            player_name = str(row_data[0])
+            is_current_player = self.player_name and player_name.lower() == self.player_name.lower()
+            
             for col, value in enumerate(row_data):
                 if col == 0 or self.display_columns[col] not in numeric_columns:
                     item = QTableWidgetItem(str(value) if value is not None else "")
                 else:
                     item = self._create_numeric_item(value)
+                
+                # Highlight current player's row with the neutral color
+                if is_current_player:
+                    item.setBackground(highlight_color)
+                    
                 self.table.setItem(row, col, item)
 
     def _create_numeric_item(self, value):
@@ -538,6 +592,10 @@ class MainWindow(QMainWindow):
         
         self.load_data_from_db()
 
+    def _create_snapshot_name(self, row):
+        """Create snapshot name using split date/time fields"""
+        return f"{row[0]} - {row[1]} - {row[2]} {row[3]} - {row[4]}"  # outcome - map - date time - team
+
     def _import_single_file(self, file_path):
         """Import a single CSV file into the database."""
         with open(file_path, newline='') as csvfile:
@@ -547,10 +605,11 @@ class MainWindow(QMainWindow):
             
             if rows:
                 first_row = rows[0]
-                snapshot_name = f"{first_row[0]} - {first_row[1]} - {first_row[2]} - {first_row[3]}"
-                timestamp = first_row[2]
+                datetime_str = first_row[2]
+                date_str, time_str = datetime_str.split(' ', 1) if ' ' in datetime_str else (datetime_str, '')
+                snapshot_name = f"{first_row[0]} - {first_row[1]} - {date_str} {time_str} - {first_row[3]}"
                 
-                self.db.import_snapshot(snapshot_name, timestamp, rows)
+                self.db.import_snapshot(snapshot_name, rows)
                 self.statusBar().showMessage(f"Imported: {snapshot_name}", 3000)
 
     def check_new_files_on_startup(self):

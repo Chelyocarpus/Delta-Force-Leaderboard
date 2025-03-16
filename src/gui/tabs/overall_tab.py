@@ -6,12 +6,11 @@ from PyQt5.QtChart import (QChart, QChartView, QBarSet, QBarSeries,
 from PyQt5.QtGui import QPainter, QColor, QBrush, QPen, QFont, QFont, QCursor
 from ..widgets.numeric_sort import NumericSortItem
 from ...utils.constants import (HISTORY_TABLE_COLUMNS, QUERY_PLAYER_STATS,
-                              QUERY_FAVORITE_CLASS, QUERY_VICTORY_STATS,
-                              PLAYER_CLASSES)
+                              QUERY_VICTORY_STATS, PLAYER_CLASSES)
 import sqlite3
 import logging
 
-# Setup logging
+# Setup logging with better configuration
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG)
 
@@ -88,7 +87,8 @@ class ResizableChartView(QChartView):
         self.settings.setValue('chartGroupHeight', self.height())
 
 def create_monthly_performance_chart(cursor, player_name):
-    logger.info(f"Creating chart for player: {player_name}")
+    """Creates a monthly performance chart for the given player."""
+    logger.debug(f"Creating performance chart for player: {player_name}")
     try:
         cursor.execute("""WITH month_data AS (
                 SELECT 
@@ -126,21 +126,16 @@ def create_monthly_performance_chart(cursor, player_name):
         """, (player_name,))
 
         data = cursor.fetchall()
-        logger.debug(f"Raw data fetched: {data}")
         
         # Handle case where there's no data
         if not data:
-            logger.warning("No data found for player")
+            logger.info("No performance data available for player")
             chart = QChart()
             chart.setTitle("No performance data available")
             return QChartView(chart)
         
         try:
             months, avg_kills, avg_deaths, avg_assists, avg_revives, games, dates = zip(*reversed(data))
-            logger.debug(f"\nProcessing monthly data:")
-            logger.debug(f"Months: {months}")
-            logger.debug(f"Games per month: {games}")
-            logger.debug(f"Sample dates included: {dates}")
             
             # Format month labels with games count (simpler now)
             month_labels = [f"{m}\n({g} games)" for m, g in zip(months, games)]
@@ -268,17 +263,24 @@ def create_monthly_performance_chart(cursor, player_name):
             chart_view.setRenderHint(QPainter.Antialiasing)
             
             # Restore saved height or use default
-            saved_height = settings.value('chartGroupHeight', 50)
+            saved_height = settings.value('chartGroupHeight', 250)
             chart_view.setFixedHeight(int(saved_height))
             
             return chart_view
             
         except Exception as e:
-            logger.error(f"Error creating chart components: {str(e)}", exc_info=True)
-            raise
+            logger.error(f"Error creating chart components: {e}", exc_info=True)
+            chart = QChart()
+            chart.setTitle("Error processing chart data")
+            return QChartView(chart)
             
+    except sqlite3.Error as e:
+        logger.error(f"Database error in chart creation: {e}")
+        chart = QChart()
+        chart.setTitle("Database error")
+        return QChartView(chart)
     except Exception as e:
-        logger.error(f"Error in chart creation: {str(e)}")
+        logger.error(f"Unexpected error in chart creation: {e}")
         chart = QChart()
         chart.setTitle("Error creating chart")
         return QChartView(chart)
@@ -316,8 +318,7 @@ def setup_overall_tab(dialog):
         cursor = conn.cursor()
         
         # Create class stats queries with corrected column name
-        cursor.execute("""
-            SELECT class, COUNT(*) as count
+        cursor.execute("""SELECT class, COUNT(*) as count
             FROM matches
             WHERE name = ?
             GROUP BY class
@@ -327,8 +328,7 @@ def setup_overall_tab(dialog):
         favorite_class = cursor.fetchone()
         
         # Get class distribution with corrected column name
-        cursor.execute("""
-            SELECT 
+        cursor.execute("""SELECT 
                 class,
                 COUNT(*) as count,
                 ROUND(CAST(COUNT(*) AS FLOAT) * 100 / 
@@ -349,8 +349,7 @@ def setup_overall_tab(dialog):
                 class_stats.append((class_name, 0, 0.0))
 
         # Updated query to handle all numeric columns
-        cursor.execute("""
-            SELECT 
+        cursor.execute("""SELECT 
                 COUNT(*) as total_games,
                 SUM(CAST(score as INTEGER)) as total_score,
                 ROUND(AVG(CAST(score as INTEGER)), 1) as avg_score,

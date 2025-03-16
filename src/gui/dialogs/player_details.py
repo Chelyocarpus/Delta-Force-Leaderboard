@@ -19,6 +19,7 @@ class PlayerDetailsDialog(QDialog):
         self.overall_tab = QWidget()
         self.table = None  # Will be set by overall_tab
         self.db = parent.db  # Add reference to database
+        self.tabs = QTabWidget()  # Store tabs widget as instance variable
         
         self.setWindowTitle(f"Player Details - {player_name}")
         self.setMinimumSize(600, 500)  # Reduced from 800 to 600
@@ -38,18 +39,34 @@ class PlayerDetailsDialog(QDialog):
 
     def init_ui(self):
         layout = QVBoxLayout()
-        tabs = QTabWidget()
+        self.tabs.clear()  # Clear any existing tabs
+        
+        # Define base tab configurations with consistent argument format
+        self.update_available_tabs()
+        
+        layout.addWidget(self.tabs)
+
+        # Add close button
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(self.accept)
+        layout.addWidget(close_button)
+
+        self.setLayout(layout)
+
+    def update_available_tabs(self):
+        """Update available tabs based on player name"""
+        self.tabs.clear()
         
         # Define base tab configurations with consistent argument format
         tab_configs = [
-            ("Overall Stats", setup_overall_tab, self),  # Pass dialog directly
+            ("Overall Stats", setup_overall_tab, self),
             ("Classes", ClassTab, [self, self.player_name, self.parent.db.db_path]),
-            ("Map Performance", MapTab, [self, self.player_name, self.parent.db.db_path])  # Fixed map tab args
+            ("Map Performance", MapTab, [self, self.player_name, self.parent.db.db_path])
         ]
 
-        # Add special tabs for specific users
-        from src.utils.constants import USER
-        if self.player_name in USER:
+        # Add special tabs only for the currently set player
+        if (self.parent.player_name and 
+            self.player_name.lower() == self.parent.player_name.lower()):
             tab_configs.extend([
                 ("Attacker", AttackerTab, [self, self.player_name, self.parent.db.db_path]),
                 ("Defender", DefenderTab, [self, self.player_name, self.parent.db.db_path]),
@@ -61,28 +78,19 @@ class PlayerDetailsDialog(QDialog):
             ("Match History", MatchHistoryTab, [self, self.player_name, self.parent.db.db_path])
         )
 
-        # Add the new achievements tab
+        # Add the achievements tab
         tab_configs.append(
             ("Achievements", setup_achievement_tab, self)
         )
 
         # Create and add tabs
         for tab_name, tab_class, args in tab_configs:
-            if tab_name == "Overall Stats" or tab_name == "Achievements":
-                tab = tab_class(args)  # Special handling for setup_overall_tab and setup_achievement_tab
+            if tab_name in ["Overall Stats", "Achievements"]:
+                tab = tab_class(args)
             else:
-                tab = tab_class(*args)  # All other tabs use positional args
+                tab = tab_class(*args)
             
-            tabs.addTab(tab, tab_name)
-
-        layout.addWidget(tabs)
-
-        # Add close button
-        close_button = QPushButton("Close")
-        close_button.clicked.connect(self.accept)
-        layout.addWidget(close_button)
-
-        self.setLayout(layout)
+            self.tabs.addTab(tab, tab_name)
 
     def closeEvent(self, event):
         """Save dialog geometry before closing"""
@@ -92,7 +100,7 @@ class PlayerDetailsDialog(QDialog):
     def restore_dialog_state(self):
         """Restore dialog geometry"""
         geometry = self.settings.value('playerDetailsGeometry')
-        if geometry is not None:
+        if (geometry is not None):
             self.restoreGeometry(geometry)
         else:
             # Use smaller default size

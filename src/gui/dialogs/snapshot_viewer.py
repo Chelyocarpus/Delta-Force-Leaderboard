@@ -1,4 +1,5 @@
 import sqlite3
+import re
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, 
                            QTableWidgetItem, QPushButton, QLineEdit, QLabel,
                            QHeaderView, QMessageBox, QComboBox, QApplication, QMenu)
@@ -11,7 +12,7 @@ class SnapshotViewerDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent = parent
-        self.setWindowTitle("Match History")
+        self.setWindowTitle("Match Database Manager")
         self.setModal(True)
         self.setMinimumSize(800, 600)
         self.init_ui()
@@ -23,7 +24,7 @@ class SnapshotViewerDialog(QDialog):
     def init_ui(self):
         layout = QVBoxLayout()
 
-        # Search bar setup
+        # Simple search bar
         search_layout = QHBoxLayout()
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search matches...")
@@ -32,12 +33,11 @@ class SnapshotViewerDialog(QDialog):
         search_layout.addWidget(self.search_input)
         layout.addLayout(search_layout)
 
-        # Create enhanced table
+        # Create table with modified columns (date/time split, no players/score)
         self.table = QTableWidget()
-        self.table.setColumnCount(8)  # Reduced column count
+        self.table.setColumnCount(5)  # Reduced to 5 columns
         self.table.setHorizontalHeaderLabels([
-            "Date", "Map", "Outcome", "Team", "Players",
-            "Total Score", "Top Player", "Top Score"
+            "Date", "Time", "Map", "Outcome", "Team"
         ])
         
         # Set table properties
@@ -46,7 +46,7 @@ class SnapshotViewerDialog(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
         
-        # Set column properties with stretch mode
+        # Set column properties
         header = self.table.horizontalHeader()
         for i in range(self.table.columnCount()):
             header.setSectionResizeMode(i, QHeaderView.Stretch)
@@ -57,101 +57,121 @@ class SnapshotViewerDialog(QDialog):
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_context_menu)
 
-        # Add filter options
+        # Enhanced filter options with date filter
         filter_layout = QHBoxLayout()
-        filter_layout.addWidget(QLabel("Filters:"))
         
         # Date filter
         self.date_filter = QComboBox()
         self.date_filter.addItem("All Dates")
+        self.date_filter.currentTextChanged.connect(self.refresh_snapshots)
         filter_layout.addWidget(QLabel("Date:"))
         filter_layout.addWidget(self.date_filter)
         
         # Map filter
         self.map_filter = QComboBox()
         self.map_filter.addItem("All Maps")
+        self.map_filter.currentTextChanged.connect(self.refresh_snapshots)
         filter_layout.addWidget(QLabel("Map:"))
         filter_layout.addWidget(self.map_filter)
         
-        # Outcome filter
-        self.outcome_filter = QComboBox()
-        self.outcome_filter.addItems(["All Outcomes", "Victory", "Defeat"])
-        filter_layout.addWidget(QLabel("Outcome:"))
-        filter_layout.addWidget(self.outcome_filter)
-        
-        # Connect filter signals
-        self.date_filter.currentTextChanged.connect(self.refresh_snapshots)
-        self.map_filter.currentTextChanged.connect(self.refresh_snapshots)
-        self.outcome_filter.currentTextChanged.connect(self.refresh_snapshots)
-        
         layout.addLayout(filter_layout)
 
-        # Buttons
+        # Button row
         button_layout = QHBoxLayout()
         
-        # Add purge button with red styling
-        purge_button = QPushButton("Purge Database")
-        purge_button.setStyleSheet("background-color: #ff4444; color: white; font-weight: bold;")
-        purge_button.clicked.connect(self.purge_database)
-        button_layout.addWidget(purge_button)
+        # Database management buttons
+        edit_button = QPushButton("Edit Selected")
+        edit_button.clicked.connect(self.edit_selected_snapshot)
+        button_layout.addWidget(edit_button)
         
         view_button = QPushButton("View Details")
         view_button.clicked.connect(self.view_selected_snapshot)
         button_layout.addWidget(view_button)
         
-        delete_button = QPushButton("Delete")
+        delete_button = QPushButton("Delete Selected")
         delete_button.clicked.connect(self.delete_selected_snapshot)
         button_layout.addWidget(delete_button)
+        
+        # Add purge button with warning styling
+        purge_button = QPushButton("Purge Database")
+        purge_button.setStyleSheet("background-color: #ff4444; color: white; font-weight: bold;")
+        purge_button.clicked.connect(self.purge_database)
+        button_layout.addWidget(purge_button)
         
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.accept)
         button_layout.addWidget(close_button)
         
         layout.addLayout(button_layout)
+        
+        # Status label
+        self.status_label = QLabel("Ready")
+        layout.addWidget(self.status_label)
+        
         self.setLayout(layout)
         self.load_filters()
 
     def load_filters(self):
-        """Load filter options from database"""
-        with self.parent.db.get_connection() as conn:
-            cursor = conn.cursor()
-            
-            # Check if table has data first
-            cursor.execute("SELECT COUNT(*) FROM matches")
-            if cursor.fetchone()[0] == 0:
-                return  # Don't load filters if there's no data
-            
-            # Try to detect the correct column name
-            cursor.execute("PRAGMA table_info(matches)")
-            columns = [col[1] for col in cursor.fetchall()]
-            
-            date_column = 'data'
-            
-            # Use the correct column name
-            cursor.execute(f"SELECT DISTINCT {date_column} FROM matches ORDER BY {date_column} DESC")
-            dates = cursor.fetchall()
-            if dates:  # Only add items if there are dates
-                self.date_filter.addItems([row[0] for row in dates])
-            
-            # Load maps
-            cursor.execute("SELECT DISTINCT map FROM matches ORDER BY map")
-            maps = cursor.fetchall()
-            if maps:  # Only add items if there are maps
-                self.map_filter.addItems([row[0] for row in maps])
-
-    def refresh_snapshots(self):
-        self.table.setRowCount(0)  # Clear table first
-        
+        """Load filter options from database (maps and dates)"""
         try:
             with self.parent.db.get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # Check if table has data first
                 cursor.execute("SELECT COUNT(*) FROM matches")
                 if cursor.fetchone()[0] == 0:
                     return
                 
+                # First detect the date column
+                cursor.execute("PRAGMA table_info(matches)")
+                columns = [col[1] for col in cursor.fetchall()]
+                date_column = 'data'  # Default column name
+                
+                # Load unique dates (just the date part, not time)
+                query = f"""
+                    SELECT DISTINCT 
+                        CASE 
+                            WHEN instr({date_column}, ':') > 0 
+                            THEN TRIM(substr({date_column}, 1, instr({date_column}, ':') - 3))
+                            ELSE {date_column} 
+                        END as date_part
+                    FROM matches
+                    ORDER BY {date_column} DESC
+                """
+                cursor.execute(query)
+                dates = [row[0] for row in cursor.fetchall()]
+                
+                # Handle case where SQL splitting failed
+                unique_dates = set()
+                for date_str in dates:
+                    if ':' in date_str:  # SQL splitting failed
+                        date_part, _ = self._split_datetime(date_str)
+                        unique_dates.add(date_part)
+                    else:
+                        unique_dates.add(date_str)
+                
+                # Update the date filter
+                self.date_filter.clear()
+                self.date_filter.addItem("All Dates")
+                self.date_filter.addItems(sorted(list(unique_dates), reverse=True))
+                
+                # Load maps
+                cursor.execute("SELECT DISTINCT map FROM matches ORDER BY map")
+                maps = cursor.fetchall()
+                if maps:
+                    self.map_filter.clear()
+                    self.map_filter.addItem("All Maps")
+                    self.map_filter.addItems([row[0] for row in maps])
+        except Exception as e:
+            self.status_label.setText(f"Error loading filters: {str(e)}")
+
+    def refresh_snapshots(self):
+        self.table.setRowCount(0)  # Clear table first
+        self.status_label.setText("Loading data...")
+        
+        try:
             search_text = self.search_input.text().lower()
             map_filter = self.map_filter.currentText()
-            outcome_filter = self.outcome_filter.currentText()
             date_filter = self.date_filter.currentText()
             
             with self.parent.db.get_connection() as conn:
@@ -160,62 +180,64 @@ class SnapshotViewerDialog(QDialog):
                 # First detect the date column
                 cursor.execute("PRAGMA table_info(matches)")
                 columns = [col[1] for col in cursor.fetchall()]
-                date_column = 'data'
+                date_column = 'data'  # Default column name
                 
+                # Modified query to properly split date and time and support filtering
                 query = f"""
                     SELECT 
-                        {date_column},
+                        CASE 
+                            WHEN instr({date_column}, ':') > 0 
+                            THEN TRIM(substr({date_column}, 1, instr({date_column}, ':') - 3))
+                            ELSE {date_column} 
+                        END as date_part,
+                        CASE 
+                            WHEN instr({date_column}, ':') > 0 
+                            THEN TRIM(substr({date_column}, instr({date_column}, ':') - 2))
+                            ELSE ''
+                        END as time_part,
                         map,
                         outcome,
                         team,
-                        COUNT(DISTINCT name) as player_count,
-                        SUM(CAST(score as INTEGER)) as total_score,
-                        (SELECT name FROM matches m2 
-                         WHERE m2.{date_column} = m1.{date_column} 
-                         AND m2.map = m1.map 
-                         AND m2.team = m1.team 
-                         ORDER BY CAST(score as INTEGER) DESC LIMIT 1) as top_player,
-                        MAX(CAST(score as INTEGER)) as top_score,
+                        {date_column} as full_date,
                         outcome || ' - ' || map || ' - ' || {date_column} || ' - ' || team as snapshot_name
                     FROM matches m1
-                    WHERE (LOWER(map) LIKE ? OR LOWER(outcome) LIKE ?)
+                    WHERE (LOWER(map) LIKE ? OR LOWER(outcome) LIKE ? OR LOWER({date_column}) LIKE ?)
                         AND (? = 'All Maps' OR map = ?)
-                        AND (? = 'All Outcomes' OR 
-                             (? = 'Victory' AND outcome LIKE '%VICTORY%') OR 
-                             (? = 'Defeat' AND outcome LIKE '%DEFEAT%'))
-                        AND (? = 'All Dates' OR {date_column} = ?)
+                        AND (? = 'All Dates' OR 
+                             CASE 
+                                WHEN instr({date_column}, ':') > 0 
+                                THEN TRIM(substr({date_column}, 1, instr({date_column}, ':') - 3))
+                                ELSE {date_column} 
+                             END = ?)
                     GROUP BY {date_column}, map, outcome, team
                     ORDER BY {date_column} DESC, map ASC
                 """
                 
                 cursor.execute(query, (
-                    f'%{search_text}%', f'%{search_text}%',
+                    f'%{search_text}%', f'%{search_text}%', f'%{search_text}%',
                     map_filter, map_filter,
-                    outcome_filter, outcome_filter, outcome_filter,
                     date_filter, date_filter
                 ))
                 
+                row_count = 0
                 for row_idx, row_data in enumerate(cursor.fetchall()):
                     self.table.insertRow(row_idx)
-                    date, map_name, outcome, team, player_count, total_score, top_player, top_score, match_id = row_data
+                    date_part, time_part, map_name, outcome, team, full_date, match_id = row_data
                     
-                    # Format scores safely
-                    try:
-                        formatted_total = f"{int(total_score):,}" if total_score else "0"
-                        formatted_top = f"{int(top_score):,}" if top_score else "0"
-                    except (ValueError, TypeError):
-                        formatted_total = str(total_score)
-                        formatted_top = str(top_score)
+                    # If SQL couldn't split correctly, try to do it in Python
+                    if ':' in date_part:  # This means SQL splitting failed
+                        date_part, time_part = self._split_datetime(full_date)
+                    
+                    # Format the date and time for display
+                    date_display = date_part.strip() if date_part else "Unknown"
+                    time_display = time_part.strip() if time_part else ""
                     
                     items = [
-                        (date, Qt.AlignCenter),
+                        (date_display, Qt.AlignCenter),
+                        (time_display, Qt.AlignCenter),
                         (map_name, Qt.AlignLeft),
                         (outcome, Qt.AlignCenter),
-                        (team, Qt.AlignCenter),
-                        (str(player_count), Qt.AlignCenter),
-                        (formatted_total, Qt.AlignRight),
-                        (top_player or "Unknown", Qt.AlignLeft),
-                        (formatted_top, Qt.AlignRight)
+                        (team, Qt.AlignCenter)
                     ]
                     
                     for col, (value, alignment) in enumerate(items):
@@ -223,71 +245,130 @@ class SnapshotViewerDialog(QDialog):
                         item.setTextAlignment(alignment)
                         if col == 0:  # Store match_id in first column
                             item.setData(Qt.UserRole, match_id)
+                            # Also store full date for editing purposes
+                            item.setData(Qt.UserRole + 1, full_date)
                         self.table.setItem(row_idx, col, item)
+                    row_count += 1
+                
+                self.status_label.setText(f"Showing {row_count} matches")
         
-        except sqlite3.OperationalError as e:
+        except sqlite3.Error as e:
+            self.status_label.setText(f"Database error: {str(e)}")
             QMessageBox.critical(self, "Database Error", 
-                f"Failed to access the database: {str(e)}\nThe database might be locked or corrupted.")
-        except sqlite3.DatabaseError as e:
-            QMessageBox.critical(self, "Database Error",
-                f"A database error occurred: {str(e)}\nThe database might need repair.")
+                f"Failed to access the database: {str(e)}")
         except Exception as e:
+            self.status_label.setText(f"Error: {str(e)}")
             QMessageBox.critical(self, "Error",
-                f"An unexpected error occurred while refreshing data: {str(e)}")
+                f"An unexpected error occurred: {str(e)}")
+    
+    def _split_datetime(self, datetime_str):
+        """Split a datetime string into date and time parts
+        Handles formats like '20 Jan 2025 00:15:11'"""
+        if not datetime_str:
+            return "", ""
+        
+        # Try to match time pattern HH:MM:SS
+        time_match = re.search(r'(\d{1,2}:\d{2}(?::\d{2})?)', datetime_str)
+        if time_match:
+            time_part = time_match.group(1)
+            # Date is everything before the time
+            date_part = datetime_str[:time_match.start()].strip()
+            return date_part, time_part
+        
+        # If no time pattern found, return the full string as date
+        return datetime_str, ""
 
     def view_selected_snapshot(self):
         selected_rows = self.table.selectedItems()
         if not selected_rows:
+            self.status_label.setText("No match selected")
             return
             
-        snapshot_name = self.table.item(selected_rows[0].row(), 0).data(Qt.UserRole)
-        # Add your snapshot detail viewing logic here
-        QMessageBox.information(self, "Match Details", f"Viewing match: {snapshot_name}")
+        row = selected_rows[0].row()
+        snapshot_name = self.table.item(row, 0).data(Qt.UserRole)
+        if snapshot_name:
+            self.on_row_double_clicked(row, 0)
+        else:
+            self.status_label.setText("Cannot view details: missing snapshot ID")
 
     def delete_selected_snapshot(self):
         selected_rows = self.table.selectedItems()
         if not selected_rows:
+            self.status_label.setText("No match selected")
             return
             
-        match_id = self.table.item(selected_rows[0].row(), 0).data(Qt.UserRole)
+        row = selected_rows[0].row()
+        match_id = self.table.item(row, 0).data(Qt.UserRole)
+        date_display = self.table.item(row, 0).text()
+        time_display = self.table.item(row, 1).text()
+        map_name = self.table.item(row, 2).text()
+        outcome = self.table.item(row, 3).text()
+        team = self.table.item(row, 4).text()
+        
+        # Create a readable description for the confirmation dialog
+        match_desc = f"{date_display}"
+        if time_display:
+            match_desc += f" {time_display}"
+        match_desc += f" - {map_name}"
         
         reply = QMessageBox.question(self, 'Delete Match',
-            f'Are you sure you want to delete this match?\n{match_id}',
+            f'Are you sure you want to delete:\n{match_desc}?',
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             
         if reply == QMessageBox.Yes:
             try:
                 with self.parent.db.get_connection() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("DELETE FROM matches WHERE snapshot_name = ?", (match_id,))
+                    # Delete using the values directly from the table
+                    full_date = self.table.item(row, 0).data(Qt.UserRole + 1)
+                    cursor.execute("""
+                        DELETE FROM matches 
+                        WHERE data = ? 
+                        AND map = ? 
+                        AND outcome = ? 
+                        AND team = ?
+                    """, (full_date, map_name, outcome, team))
+                    
+                    deleted_rows = cursor.rowcount
                     conn.commit()
                     
                 self.refresh_snapshots()
-                self.parent.on_snapshot_deleted(match_id)
-                QMessageBox.information(self, "Success", "Match deleted successfully")
+                if hasattr(self.parent, 'on_snapshot_deleted'):
+                    self.parent.on_snapshot_deleted(match_id)
+                self.status_label.setText(f"Deleted {deleted_rows} match entries")
                 
-            except sqlite3.OperationalError as e:
+            except sqlite3.Error as e:
+                self.status_label.setText(f"Delete failed: {str(e)}")
                 QMessageBox.critical(self, "Database Error",
-                    f"Failed to delete match - database is locked or busy: {str(e)}\nPlease try again.")
-            except sqlite3.IntegrityError as e:
-                QMessageBox.critical(self, "Database Error",
-                    f"Cannot delete match due to database constraints: {str(e)}")
+                    f"Failed to delete match: {str(e)}")
             except Exception as e:
+                self.status_label.setText(f"Error: {str(e)}")
                 QMessageBox.critical(self, "Error",
-                    f"An unexpected error occurred while deleting: {str(e)}")
+                    f"An unexpected error occurred: {str(e)}")
 
-    def on_row_double_clicked(self, row, _):  # Use underscore for unused parameter
-        snapshot_name = self.table.item(row, 0).data(Qt.UserRole)  # Get match_id from UserRole data of first column
-        print(f"Debug - Opening match details for: {snapshot_name}")
-        dialog = MatchDetailsDialog(self, snapshot_name)
-        dialog.exec_()
+    def on_row_double_clicked(self, row, _):
+        snapshot_name = self.table.item(row, 0).data(Qt.UserRole)
+        self.status_label.setText(f"Viewing match details...")
+        try:
+            # Create a connection that the MatchDetailsDialog can use
+            if not hasattr(self, 'db_path'):
+                self.db_path = self.parent.db.db_path
+                
+            dialog = MatchDetailsDialog(self, snapshot_name)
+            dialog.exec_()
+            self.status_label.setText("Ready")
+        except Exception as e:
+            self.status_label.setText(f"Error showing match details: {str(e)}")
+            QMessageBox.critical(self, "Error", 
+                f"Failed to display match details: {str(e)}")
 
     def purge_database(self):
         """Purge all data from database after confirmation"""
         dialog = PurgeConfirmDialog(self)
         if dialog.exec_() == QDialog.Accepted:
             try:
-                # Clear the table first to release any connections
+                self.status_label.setText("Purging database...")
+                # Clear the table first
                 self.table.clearContents()
                 self.table.setRowCount(0)
                 
@@ -297,33 +378,35 @@ class SnapshotViewerDialog(QDialog):
                 self.map_filter.clear()
                 self.map_filter.addItem("All Maps")
                 
-                # Process events to ensure UI updates are complete
+                # Process events to ensure UI updates
                 QApplication.processEvents()
                 
                 if self.parent.db.purge_database():
-                    # Clear import tracking
-                    self.parent.import_manager.clear_tracking()
+                    # Clear import tracking if available
+                    if hasattr(self.parent, 'import_manager'):
+                        self.parent.import_manager.clear_tracking()
                     
                     # Refresh displays
                     self.refresh_snapshots()
-                    self.parent.load_data_from_db()
+                    if hasattr(self.parent, 'load_data_from_db'):
+                        self.parent.load_data_from_db()
                     
+                    self.status_label.setText("Database purged successfully")
                     QMessageBox.information(self, "Success", 
-                        "Database has been purged successfully.\nA backup was created before purging.")
+                        "Database has been purged. A backup was created.")
                 else:
+                    self.status_label.setText("Database purge failed")
                     raise RuntimeError("Database purge operation failed")
                     
-            except sqlite3.OperationalError as e:
-                QMessageBox.critical(self, "Database Error", 
-                    f"Failed to purge database - database is locked or busy: {str(e)}\nPlease close any other applications using the database.")
-            except sqlite3.DatabaseError as e:
-                QMessageBox.critical(self, "Database Error",
-                    f"A database error occurred during purge: {str(e)}\nThe database might need repair.")
             except Exception as e:
+                self.status_label.setText(f"Purge error: {str(e)}")
                 QMessageBox.critical(self, "Error",
-                    f"An unexpected error occurred during database purge: {str(e)}")
+                    f"An error occurred during database purge: {str(e)}")
 
     def show_context_menu(self, position):
+        if not self.table.selectedItems():
+            return
+            
         menu = QMenu()
         view_action = menu.addAction("View Details")
         edit_action = menu.addAction("Edit Entry")
@@ -331,33 +414,54 @@ class SnapshotViewerDialog(QDialog):
         
         action = menu.exec_(self.table.mapToGlobal(position))
         
-        if not self.table.selectedItems():
-            return
-            
         row = self.table.selectedItems()[0].row()
         snapshot_name = self.table.item(row, 0).data(Qt.UserRole)
         
         if action == view_action:
             self.on_row_double_clicked(row, 0)
         elif action == edit_action:
-            self.edit_snapshot(snapshot_name)
+            self.edit_selected_snapshot()
         elif action == delete_action:
             self.delete_selected_snapshot()
 
-    def edit_snapshot(self, snapshot_name):
-        row = self.table.currentRow()
-        if row >= 0:
-            # Get the individual field values instead of the composite key
-            date = self.table.item(row, 0).text()
-            map_name = self.table.item(row, 1).text()
-            outcome = self.table.item(row, 2).text()
-            team = self.table.item(row, 3).text()
-            match_details = {
-                'date': date,
-                'map': map_name,
-                'outcome': outcome,
-                'team': team
-            }
-            dialog = EditSnapshotDialog(self, match_details)
+    def edit_selected_snapshot(self):
+        """Open edit dialog for the selected snapshot"""
+        selected_rows = self.table.selectedItems()
+        if not selected_rows:
+            self.status_label.setText("No match selected")
+            return
+            
+        row = selected_rows[0].row()
+        snapshot_name = self.table.item(row, 0).data(Qt.UserRole)
+        full_date = self.table.item(row, 0).data(Qt.UserRole + 1)
+        
+        # Get the individual field values
+        date_display = self.table.item(row, 0).text()
+        time_display = self.table.item(row, 1).text()
+        map_name = self.table.item(row, 2).text()
+        outcome = self.table.item(row, 3).text()
+        team = self.table.item(row, 4).text()
+        
+        # Original values for update query
+        original_values = {
+            'snapshot_name': snapshot_name,
+            'full_date': full_date,
+            'date': date_display,
+            'time': time_display,
+            'map': map_name,
+            'outcome': outcome, 
+            'team': team
+        }
+        
+        try:
+            dialog = EditSnapshotDialog(self, original_values)
             if dialog.exec_() == QDialog.Accepted:
+                self.status_label.setText("Match updated successfully")
                 self.refresh_snapshots()
+                # Update parent if needed
+                if hasattr(self.parent, 'load_data_from_db'):
+                    self.parent.load_data_from_db()
+        except Exception as e:
+            self.status_label.setText(f"Edit error: {str(e)}")
+            QMessageBox.critical(self, "Error", 
+                f"Failed to edit match: {str(e)}")
