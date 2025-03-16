@@ -22,10 +22,16 @@ def get_highest_rank_medals(image_path, pixel_checks, medals):
     highest_rank_medals = []
 
     for i, category in enumerate(categories):
+        medal_added = False
         for j in range(2, -1, -1):  # Check Gold, Silver, Bronze in that order
             if results[i * 3 + j]:
                 highest_rank_medals.append(medals[i * 3 + j])
+                medal_added = True
                 break
+        # Make sure we're not adding multiple medals of the same category
+        if not medal_added:
+            # If no medal detected for this category, don't add anything
+            pass
 
     return highest_rank_medals
 
