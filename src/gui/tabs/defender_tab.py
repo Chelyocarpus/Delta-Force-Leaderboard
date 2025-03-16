@@ -98,18 +98,18 @@ class DefenderTab(QWidget):
                 ("Total Vehicle Damage", "vehicle_damage_total"),    # Added
                 ("Average Vehicle Damage", "vehicle_damage_avg"),    # Added
             ],
-            "Match Stats": [
+            "Match Performance": [
                 ("Total Games", "games_total"),
                 ("Victories", "victories"),
                 ("Win Rate", "win_rate", "%"),
                 ("Average Rank", "avg_rank"),
             ],
-            "Score Analysis": [
+            "Score Performance": [
                 ("Total Score", "score_total"),
                 ("Average Score", "score_avg"),
                 ("Best Score", "score_best"),
             ],
-            "Support Activities": [
+            "Support Performance": [
                 ("Total Assists", "assists_total"),
                 ("Average Assists", "assists_avg"),
                 ("Total Revives", "revives_total"),

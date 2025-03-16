@@ -78,14 +78,14 @@ class ClassTab(QWidget):
                 
                 # Reorganized stat groups to match overall tab
                 stat_groups = {
-                    "Performance Summary": [
+                    "Match Performance": [
                         ("Games Played:", class_data[1]),
                         ("Victories:", class_data[16]),
                         ("Defeats:", class_data[17]),
                         ("Win Rate:", f"{class_data[18]:.1f}%"),
                         ("Average Rank:", int(class_data[15]))
                     ],
-                    "Combat Stats": [
+                    "Combat Performance": [
                         ("Total Score:", class_data[2]),  # This is now total_score
                         ("Average Score:", int(class_data[2] / class_data[1]) if class_data[1] > 0 else 0),  # Calculate average from total
                         ("Best Score:", class_data[3])  # This is now best_score
@@ -99,7 +99,7 @@ class ClassTab(QWidget):
                         ("Total Vehicle Damage:", class_data[19]),
                         ("Average Vehicle Damage:", int(class_data[20]))
                     ],
-                    "Support Stats": [
+                    "Support Performance": [
                         ("Total Assists:", class_data[9]),
                         ("Average Assists:", int(class_data[10])),
                         ("Total Revives:", class_data[11]),
@@ -107,7 +107,7 @@ class ClassTab(QWidget):
                         ("Total Tactical Respawns:", class_data[21]),
                         ("Average Tactical Respawns:", int(class_data[22]))
                     ],
-                    "Objective Stats": [
+                    "Objective Performance": [
                         ("Total Captures:", class_data[13]),
                         ("Average Captures:", int(class_data[14]))
                     ]
