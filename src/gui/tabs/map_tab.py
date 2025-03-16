@@ -43,12 +43,12 @@ class MapTab(QWidget):
         
         # Define stat groups
         groups = {
-            "General": [
+            "Match Performance": [
                 ("Total Games", "games_played"),
                 ("Win Rate", "win_rate", "%"),
                 ("Average Rank", "avg_rank"),
             ],
-            "Combat": [
+            "Combat Performance ": [
                 ("Average Score", "avg_score"),
                 ("Best Score", "best_score"),
                 ("Average Kills", "avg_kills"),
@@ -58,7 +58,7 @@ class MapTab(QWidget):
                 ("Total Vehicle Damage", "total_vehicle_damage"),
                 ("Average Vehicle Damage", "avg_vehicle_damage"),
             ],
-            "Support": [
+            "Support Performance": [
                 ("Average Assists", "avg_assists"),
                 ("Best Assists", "best_assists"),
                 ("Average Revives", "avg_revives"),
@@ -66,7 +66,7 @@ class MapTab(QWidget):
                 ("Total Tactical Respawns", "total_tactical_respawn"),
                 ("Average Tactical Respawns", "avg_tactical_respawn"),
             ],
-            "Objective": [
+            "Objective Performance": [
                 ("Average Captures", "avg_captures"),
                 ("Best Captures", "best_captures")
             ]

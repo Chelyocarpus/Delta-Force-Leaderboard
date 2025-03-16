@@ -394,13 +394,13 @@ def setup_overall_tab(dialog):
                 *[(f"{class_name} Games:", f"{count} ({pct}%)")
                   for class_name, count, pct in class_stats],
             ],
-            "Match Results": [
+            "Match Performance": [
                 ("Victories:", victories),
                 ("Defeats:", defeats),
                 ("Win Rate:", win_rate),
                 ("Average Rank:", stats[19] if stats else 0),
             ],
-            "Combat Stats": [
+            "Combat Performance": [
                 ("Total Score:", stats[1] if stats else 0),
                 ("Average Score:", stats[2] if stats else 0),
                 ("Best Score:", stats[3] if stats else 0),
@@ -414,7 +414,7 @@ def setup_overall_tab(dialog):
                 ("Total Vehicle Damage:", stats[15] if stats else 0),
                 ("Average Vehicle Damage:", stats[16] if stats else 0),
             ],
-            "Support Stats": [
+            "Support Performance": [
                 ("Total Assists:", stats[9] if stats else 0),
                 ("Average Assists:", stats[10] if stats else 0),
                 ("Total Revives:", stats[11] if stats else 0),
@@ -422,7 +422,7 @@ def setup_overall_tab(dialog):
                 ("Total Tactical Respawns:", stats[17] if stats else 0),
                 ("Average Tactical Respawns:", stats[18] if stats else 0),
             ],
-            "Objective Stats": [
+            "Objective Performance": [
                 ("Total Captures:", stats[13] if stats else 0),
                 ("Average Captures:", stats[14] if stats else 0),
             ]
