@@ -6,7 +6,6 @@ changelog:
       - ignore-for-release
       - Github/Meta
       - Skip Changelog
-    authors:
   categories:
     - title: 🎉 New Features
       labels:
