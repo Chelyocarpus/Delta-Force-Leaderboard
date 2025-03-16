@@ -1,6 +1,6 @@
 PyQt5==5.15.9
 Pillow==10.0.0
-tqdm==4.66.1
+tqdm==4.66.3
 python-doctr==0.6.0
 python-doctr[torch]
 typing-extensions>=4.0.0
