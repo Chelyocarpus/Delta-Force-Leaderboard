@@ -211,11 +211,12 @@ class MedalProcessor:
                 for medal in self.config.MEDAL_TYPES}
 
     def get_highest_medal(self, medals: Dict[str, int], category: str) -> str:
-        return next(
-            (level for level in ["Gold", "Silver", "Bronze"] 
-             if f"{category} {level} Medal" in medals),
-            "None"
-        )
+        """Returns the specific medal for a category if present in the medals dictionary"""
+        for level in ["Gold", "Silver", "Bronze"]:
+            medal_name = f"{category} {level} Medal"
+            if medal_name in medals and medals[medal_name] > 0:
+                return level
+        return "None"
 
 class MatchProcessor:
     def __init__(self, input_dir: str):
